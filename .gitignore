@@ -1,0 +1,47 @@
+# Unreal Engine 5 - recommended .gitignore
+# Ignore build artifacts, cache and user-local files
+
+# Binaries and builds
+Binaries/
+Build/
+
+# Intermediate and generated files
+DerivedDataCache/
+Intermediate/
+
+# User-specific and local files
+Saved/
+*.suo
+*.user
+*.userprefs
+*.opensdf
+*.sdf
+*.log
+
+# Visual Studio / IDE
+.vs/
+.vscode/
+*.VC.db
+*.VC.opendb
+
+# Mac
+.DS_Store
+*.xcuserdata
+*.xcworkspace
+*.xcuserstate
+
+# CrashReporter, cooked content
+Saved/Cooked/
+Saved/Logs/
+
+# Editor temp
+*_Autosaves/
+*_Backup/
+
+# Other
+*.tmp
+*.cache
+*.db
+.idea/
+
+AGENTS.md
