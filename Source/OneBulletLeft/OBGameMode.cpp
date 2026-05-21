@@ -2,7 +2,10 @@
 
 #include "Engine/StaticMeshActor.h"
 #include "Engine/StaticMesh.h"
+#include "EngineUtils.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/GameUserSettings.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerStart.h"
 #include "Kismet/GameplayStatics.h"
 #include "NavigationSystem.h"
@@ -20,11 +23,19 @@ AOBGameMode::AOBGameMode()
 	FastEnemyClass = AOBEnemy::StaticClass();
 	HeavyEnemyClass = AOBEnemy::StaticClass();
 	BulletPickupClass = AOBBulletPickup::StaticClass();
+
+	WaveDefinitions = {
+		FOBWaveDefinition{2, 0, 1.0f, 0.8f, 2},
+		FOBWaveDefinition{1, 1, 6.0f, 1.0f, 3},
+		FOBWaveDefinition{3, 2, 8.0f, 0.9f, 5}
+	};
 }
 
 void AOBGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+	ApplyWindowMode();
+	GetWorldTimerManager().SetTimer(WindowModeTimerHandle, this, &AOBGameMode::ApplyWindowMode, 0.25f, false);
 
 	if (AOBGameState* OneBulletState = GetGameState<AOBGameState>())
 	{
@@ -46,8 +57,15 @@ void AOBGameMode::BeginPlay()
 		BuildGreyboxArena();
 	}
 
-	SpawnEnemyWaveTick();
-	GetWorldTimerManager().SetTimer(SpawnTimerHandle, this, &AOBGameMode::SpawnEnemyWaveTick, SpawnInterval, true);
+	if (bUseScriptedWaves && WaveDefinitions.Num() > 0)
+	{
+		RestartSpawning();
+	}
+	else
+	{
+		SpawnEnemyWaveTick();
+		GetWorldTimerManager().SetTimer(SpawnTimerHandle, this, &AOBGameMode::SpawnEnemyWaveTick, SpawnInterval, true);
+	}
 }
 
 void AOBGameMode::BuildGreyboxArena()
@@ -69,21 +87,108 @@ void AOBGameMode::BuildGreyboxArena()
 	}
 }
 
-void AOBGameMode::SpawnEnemyWaveTick()
+void AOBGameMode::ApplyWindowMode()
 {
-	if (CountLiveEnemies() >= MaxLiveEnemies || SpawnPoints.Num() == 0)
+	if (!bForceWindowedMode)
 	{
 		return;
 	}
 
-	FVector SpawnLocation = FVector::ZeroVector;
-	if (!TryChooseSpawnLocation(SpawnLocation))
+	UGameUserSettings* Settings = GEngine ? GEngine->GetGameUserSettings() : nullptr;
+	if (!Settings)
 	{
+		return;
+	}
+
+	Settings->SetFullscreenMode(EWindowMode::Windowed);
+	Settings->SetScreenResolution(FIntPoint(WindowedResolutionX, WindowedResolutionY));
+	Settings->ApplySettings(false);
+	Settings->SaveSettings();
+
+	if (APlayerController* PlayerController = UGameplayStatics::GetPlayerController(this, 0))
+	{
+		PlayerController->ConsoleCommand(FString::Printf(TEXT("r.setres %dx%dw"), WindowedResolutionX, WindowedResolutionY), true);
+	}
+	else if (GEngine && GetWorld())
+	{
+		GEngine->Exec(GetWorld(), *FString::Printf(TEXT("r.setres %dx%dw"), WindowedResolutionX, WindowedResolutionY));
+	}
+}
+
+void AOBGameMode::SpawnEnemyWaveTick()
+{
+	const int32 LiveLimit = (bUseScriptedWaves && WaveDefinitions.IsValidIndex(CurrentWaveIndex))
+		? WaveDefinitions[CurrentWaveIndex].MaxLiveEnemies
+		: MaxLiveEnemies;
+
+	if (CountLiveEnemies() >= LiveLimit || SpawnPoints.Num() == 0)
+	{
+		return;
+	}
+
+	if (bUseScriptedWaves && WaveDefinitions.IsValidIndex(CurrentWaveIndex))
+	{
+		if (RemainingFastInWave <= 0 && RemainingHeavyInWave <= 0)
+		{
+			GetWorldTimerManager().ClearTimer(SpawnTimerHandle);
+			StartNextWave();
+			return;
+		}
+
+		const bool bPreferHeavy = RemainingHeavyInWave > 0 && (RemainingFastInWave <= 0 || FMath::FRand() < 0.4f);
+		if (bPreferHeavy)
+		{
+			if (SpawnEnemyOfType(EOBEnemyType::Heavy))
+			{
+				--RemainingHeavyInWave;
+			}
+		}
+		else if (RemainingFastInWave > 0 && SpawnEnemyOfType(EOBEnemyType::Fast))
+		{
+			--RemainingFastInWave;
+		}
 		return;
 	}
 
 	const bool bSpawnHeavy = FMath::FRand() < 0.35f;
-	TSubclassOf<AOBEnemy> ClassToSpawn = bSpawnHeavy ? HeavyEnemyClass : FastEnemyClass;
+	SpawnEnemyOfType(bSpawnHeavy ? EOBEnemyType::Heavy : EOBEnemyType::Fast);
+}
+
+void AOBGameMode::StartNextWave()
+{
+	const int32 NextWaveIndex = CurrentWaveIndex + 1;
+	if (!WaveDefinitions.IsValidIndex(NextWaveIndex))
+	{
+		GetWorldTimerManager().SetTimer(SpawnTimerHandle, this, &AOBGameMode::SpawnEnemyWaveTick, SpawnInterval, true);
+		return;
+	}
+
+	const float Delay = FMath::Max(WaveDefinitions[NextWaveIndex].DelayBeforeWave, 0.0f);
+	CurrentWaveIndex = NextWaveIndex;
+	GetWorldTimerManager().SetTimer(WaveStartTimerHandle, FTimerDelegate::CreateUObject(this, &AOBGameMode::StartWave, CurrentWaveIndex), Delay, false);
+}
+
+void AOBGameMode::StartWave(int32 WaveIndex)
+{
+	if (!WaveDefinitions.IsValidIndex(WaveIndex))
+	{
+		return;
+	}
+
+	RemainingFastInWave = FMath::Max(WaveDefinitions[WaveIndex].FastCount, 0);
+	RemainingHeavyInWave = FMath::Max(WaveDefinitions[WaveIndex].HeavyCount, 0);
+	GetWorldTimerManager().SetTimer(SpawnTimerHandle, this, &AOBGameMode::SpawnEnemyWaveTick, WaveDefinitions[WaveIndex].SpawnInterval, true, 0.0f);
+}
+
+bool AOBGameMode::SpawnEnemyOfType(EOBEnemyType Type)
+{
+	FVector SpawnLocation = FVector::ZeroVector;
+	if (!TryChooseSpawnLocation(SpawnLocation))
+	{
+		return false;
+	}
+
+	TSubclassOf<AOBEnemy> ClassToSpawn = Type == EOBEnemyType::Heavy ? HeavyEnemyClass : FastEnemyClass;
 	if (!ClassToSpawn)
 	{
 		ClassToSpawn = EnemyClass;
@@ -94,8 +199,11 @@ void AOBGameMode::SpawnEnemyWaveTick()
 	AOBEnemy* Enemy = GetWorld()->SpawnActor<AOBEnemy>(ClassToSpawn, SpawnLocation, FRotator::ZeroRotator, Params);
 	if (Enemy)
 	{
-		Enemy->Configure(bSpawnHeavy ? EOBEnemyType::Heavy : EOBEnemyType::Fast);
+		Enemy->Configure(Type);
+		return true;
 	}
+
+	return false;
 }
 
 bool AOBGameMode::TryChooseSpawnLocation(FVector& OutLocation) const
@@ -160,11 +268,85 @@ AOBBulletPickup* AOBGameMode::SpawnBulletPickup(const FVector& DropLocation)
 	return GetWorld()->SpawnActor<AOBBulletPickup>(BulletPickupClass, SpawnLocation, FRotator::ZeroRotator, Params);
 }
 
+void AOBGameMode::RestartRun(AOBCharacter* Player)
+{
+	GetWorldTimerManager().ClearTimer(SpawnTimerHandle);
+	GetWorldTimerManager().ClearTimer(WaveStartTimerHandle);
+
+	DestroyRunActors();
+
+	if (AOBGameState* OneBulletState = GetGameState<AOBGameState>())
+	{
+		OneBulletState->ResetRunState();
+	}
+
+	if (!Player)
+	{
+		Player = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0));
+	}
+
+	if (Player)
+	{
+		FVector SpawnLocation = Player->GetActorLocation();
+		FRotator SpawnRotation = Player->GetActorRotation();
+		FindRestartTransform(SpawnLocation, SpawnRotation);
+		Player->ResetForNewRun(SpawnLocation, SpawnRotation);
+	}
+
+	RestartSpawning();
+}
+
 int32 AOBGameMode::CountLiveEnemies() const
 {
 	TArray<AActor*> Enemies;
 	UGameplayStatics::GetAllActorsOfClass(this, AOBEnemy::StaticClass(), Enemies);
 	return Enemies.Num();
+}
+
+void AOBGameMode::RestartSpawning()
+{
+	GetWorldTimerManager().ClearTimer(SpawnTimerHandle);
+	GetWorldTimerManager().ClearTimer(WaveStartTimerHandle);
+
+	CurrentWaveIndex = INDEX_NONE;
+	RemainingFastInWave = 0;
+	RemainingHeavyInWave = 0;
+
+	if (bUseScriptedWaves && WaveDefinitions.Num() > 0)
+	{
+		StartNextWave();
+	}
+	else
+	{
+		SpawnEnemyWaveTick();
+		GetWorldTimerManager().SetTimer(SpawnTimerHandle, this, &AOBGameMode::SpawnEnemyWaveTick, SpawnInterval, true);
+	}
+}
+
+void AOBGameMode::DestroyRunActors()
+{
+	for (TActorIterator<AOBEnemy> It(GetWorld()); It; ++It)
+	{
+		It->Destroy();
+	}
+
+	for (TActorIterator<AOBBulletPickup> It(GetWorld()); It; ++It)
+	{
+		It->Destroy();
+	}
+}
+
+bool AOBGameMode::FindRestartTransform(FVector& OutLocation, FRotator& OutRotation) const
+{
+	AActor* PlayerStart = UGameplayStatics::GetActorOfClass(this, APlayerStart::StaticClass());
+	if (!PlayerStart)
+	{
+		return false;
+	}
+
+	OutLocation = PlayerStart->GetActorLocation();
+	OutRotation = PlayerStart->GetActorRotation();
+	return true;
 }
 
 void AOBGameMode::SpawnBlock(const FVector& Location, const FVector& Scale, const FName& Name)

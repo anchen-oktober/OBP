@@ -87,7 +87,13 @@ public:
 	void RecoverBullet();
 
 	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	void ResetForNewRun(const FVector& SpawnLocation, const FRotator& SpawnRotation);
+
+	UFUNCTION(BlueprintCallable, Category="One Bullet")
 	void Die();
+
+	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	void DieWithReason(const FText& DeathReason);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|Events")
 	void OnPlayerShoot(const FVector& TraceStart, const FVector& TraceEnd, const FVector& ImpactLocation, bool bHitSomething, bool bHitEnemy);
@@ -102,10 +108,22 @@ public:
 	void OnPlayerDodge(const FVector& DodgeDirection);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|Events")
+	void OnPlayerDodgeFailed(const FText& FailReason);
+
+	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|Events")
 	void OnPlayerDeath();
 
 	UFUNCTION(BlueprintPure, Category="One Bullet")
 	bool IsDead() const { return bDead; }
+
+	UFUNCTION(BlueprintPure, Category="One Bullet|Dodge")
+	bool IsDodgeReady() const { return bDodgeReady; }
+
+	UFUNCTION(BlueprintPure, Category="One Bullet|Dodge")
+	float GetDodgeCooldownRemaining() const;
+
+	UFUNCTION(BlueprintPure, Category="One Bullet|Dodge")
+	float GetDodgeCooldownNormalized() const;
 
 protected:
 	bool bDead = false;

@@ -6,6 +6,7 @@
 #include "OBHUDWidget.generated.h"
 
 class UBorder;
+class UProgressBar;
 class UTextBlock;
 
 UCLASS(Blueprintable)
@@ -26,6 +27,24 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category="One Bullet|HUD")
 	bool bCurrentGameOver = false;
 
+	UPROPERTY(BlueprintReadOnly, Category="One Bullet|HUD")
+	float CurrentSurvivalTime = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category="One Bullet|HUD")
+	float CurrentLastRunTime = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category="One Bullet|HUD")
+	int32 CurrentBestKillCount = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category="One Bullet|HUD")
+	FText CurrentDeathReason = FText::GetEmpty();
+
+	UPROPERTY(BlueprintReadOnly, Category="One Bullet|HUD")
+	bool bCurrentDodgeReady = true;
+
+	UPROPERTY(BlueprintReadOnly, Category="One Bullet|HUD")
+	float CurrentDodgeCooldownNormalized = 0.0f;
+
 	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="One Bullet|HUD|Widgets")
 	TObjectPtr<UTextBlock> BulletStatusText;
 
@@ -39,6 +58,15 @@ public:
 	TObjectPtr<UTextBlock> RestartText;
 
 	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="One Bullet|HUD|Widgets")
+	TObjectPtr<UTextBlock> DeathStatsText;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="One Bullet|HUD|Widgets")
+	TObjectPtr<UTextBlock> DodgeStatusText;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="One Bullet|HUD|Widgets")
+	TObjectPtr<UProgressBar> DodgeCooldownBar;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="One Bullet|HUD|Widgets")
 	TObjectPtr<UBorder> DeathFade;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|HUD|Text")
@@ -49,6 +77,15 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|HUD|Text")
 	FText KillCountFormat = FText::FromString(TEXT("Kills: {0}"));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|HUD|Text")
+	FText DeathStatsFormat = FText::FromString(TEXT("{0}\nKills: {1}\nTime: {2}s\nBest: {3}"));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|HUD|Text")
+	FText DodgeReadyText = FText::FromString(TEXT("Dodge: Ready"));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|HUD|Text")
+	FText DodgeCooldownFormat = FText::FromString(TEXT("Dodge: {0}s"));
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|HUD|Colors")
 	FLinearColor BulletReadyColor = FLinearColor(0.35f, 1.0f, 0.55f, 1.0f);
@@ -71,6 +108,15 @@ public:
 	UFUNCTION(BlueprintPure, Category="One Bullet|HUD")
 	bool IsGameOver() const { return bCurrentGameOver; }
 
+	UFUNCTION(BlueprintPure, Category="One Bullet|HUD")
+	float GetSurvivalTime() const { return CurrentSurvivalTime; }
+
+	UFUNCTION(BlueprintPure, Category="One Bullet|HUD")
+	int32 GetBestKillCount() const { return CurrentBestKillCount; }
+
+	UFUNCTION(BlueprintPure, Category="One Bullet|HUD")
+	bool IsDodgeReady() const { return bCurrentDodgeReady; }
+
 	UFUNCTION(BlueprintCallable, Category="One Bullet|HUD")
 	void RefreshFromGameState();
 
@@ -82,6 +128,9 @@ public:
 
 	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|HUD")
 	void OnGameOverChanged(bool bNewGameOver);
+
+	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|HUD")
+	void OnDodgeCooldownChanged(bool bNewDodgeReady, float NewCooldownNormalized);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|HUD")
 	void OnHudStateRefreshed(EBulletState NewBulletState, int32 NewKillCount, bool bNewGameOver);

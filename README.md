@@ -14,7 +14,7 @@
 - `Left Mouse Button` - выстрел
 - `Right Mouse Button` или `F` - kick / push
 - `Left Shift` - уклонение
-- `R` - рестарт после Game Over
+- `R` - мягкий рестарт после Game Over без перезагрузки уровня
 
 ## Где что лежит
 
@@ -43,9 +43,13 @@ C++ держит базовую игровую логику, чтобы прот
 - движение врагов к игроку;
 - touch-kill врагов;
 - запрет убийства с явной спины игрока;
+- короткие scripted waves для pacing прототипа;
 - kick / push;
 - уклонение в свободную сторону;
+- dodge cooldown state для HUD/BP;
 - Game Over и restart;
+- причина смерти, время выживания и best kills;
+- мягкий restart run по `R`: удаляет врагов и pickup, возвращает игрока на PlayerStart, сбрасывает волны и GameState без `OpenLevel`;
 - обновление базового HUD-состояния.
 
 При этом почти все числа и реакции вынесены в Blueprint-friendly поля и события.
@@ -61,6 +65,8 @@ C++ держит базовую игровую логику, чтобы прот
 - `Build Greybox Arena` - строить простую тестовую арену из кода.
 - `Spawn Interval` - частота спавна врагов.
 - `Max Live Enemies` - максимум живых врагов.
+- `Use Scripted Waves` - использовать короткую структуру волн вместо бесконечного равномерного спавна.
+- `Wave Definitions` - список волн. В каждой волне задаются Fast count, Heavy count, задержка перед волной, интервал спавна и лимит живых врагов.
 - `Fast Enemy Class` / `Heavy Enemy Class` - какие BP использовать для врагов.
 - `Bullet Pickup Class` - какой BP использовать для пули.
 - `Spawn Enemies Only In Front Of Player` - не спавнить врагов за спиной.
@@ -88,6 +94,7 @@ BP-события для эффектов:
 - `OnPlayerDryFire()`
 - `OnPlayerKick(KickStart, KickEnd, HitEnemyCount)`
 - `OnPlayerDodge(DodgeDirection)`
+- `OnPlayerDodgeFailed(FailReason)`
 - `OnPlayerDeath()`
 
 Сюда удобно вешать звук, camera shake, Niagara, montage, hit feedback.
@@ -142,6 +149,9 @@ C++ автоматически обновляет эти виджеты, есл�
 - `GameOverText`
 - `RestartText`
 - `DeathFade`
+- `DeathStatsText`
+- `DodgeStatusText`
+- `DodgeCooldownBar`
 
 Что делает код:
 
@@ -149,12 +159,15 @@ C++ автоматически обновляет эти виджеты, есл�
 - обновляет `Kills: N`;
 - скрывает `GameOverText`, `RestartText`, `DeathFade`, пока игрок жив;
 - показывает их при смерти.
+- обновляет `DeathStatsText`: причина смерти, kills, time survived, best kills.
+- обновляет `DodgeStatusText` и `DodgeCooldownBar`, если они есть в WBP.
 
 Дополнительные BP-события:
 
 - `OnBulletStateChanged(NewBulletState)`
 - `OnKillCountChanged(NewKillCount)`
 - `OnGameOverChanged(bNewGameOver)`
+- `OnDodgeCooldownChanged(bNewDodgeReady, NewCooldownNormalized)`
 - `OnHudStateRefreshed(NewBulletState, NewKillCount, bNewGameOver)`
 
 Их можно использовать для анимаций, звуков UI и дополнительных контейнеров.
@@ -169,6 +182,16 @@ C++ автоматически обновляет эти виджеты, есл�
 6. Пока pickup не подобран, стрелять нельзя.
 7. Игрок должен физически добежать до пули.
 8. После overlap с pickup состояние возвращается в `Ready`.
+
+## Волны
+
+По умолчанию включены три короткие волны:
+
+- Wave 1: 2 Fast.
+- Wave 2: 1 Fast + 1 Heavy.
+- Wave 3: 3 Fast + 2 Heavy.
+
+Это не полноценная production wave system, а простая pacing-структура, чтобы прототип за пару минут показывал нарастающее давление.
 
 ## Враги и видимость
 

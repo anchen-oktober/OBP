@@ -172,13 +172,37 @@ void AOBCharacter::Kick()
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(OneBulletKick), false, this);
 	GetWorld()->SweepMultiByChannel(Hits, Start, End, FQuat::Identity, ECC_Pawn, Sphere, Params);
 
-	int32 HitEnemyCount = 0;
+	TArray<AOBEnemy*> HitEnemies;
 	for (const FHitResult& Hit : Hits)
 	{
 		if (AOBEnemy* Enemy = Cast<AOBEnemy>(Hit.GetActor()))
 		{
-			++HitEnemyCount;
-			Enemy->ApplyKick(FirstPersonCamera->GetForwardVector());
+			HitEnemies.AddUnique(Enemy);
+		}
+	}
+
+	const int32 HitEnemyCount = HitEnemies.Num();
+	if (HitEnemyCount == 1)
+	{
+		const FVector AwayFromPlayer = (HitEnemies[0]->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+		HitEnemies[0]->ApplyKick(AwayFromPlayer.IsNearlyZero() ? FirstPersonCamera->GetForwardVector() : AwayFromPlayer);
+	}
+	else if (HitEnemyCount > 1)
+	{
+		HitEnemies.Sort([this](const AOBEnemy& Left, const AOBEnemy& Right)
+		{
+			const FVector ToLeft = (Left.GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+			const FVector ToRight = (Right.GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+			return FVector::DotProduct(GetActorRightVector(), ToLeft) < FVector::DotProduct(GetActorRightVector(), ToRight);
+		});
+
+		const float SpreadDegrees = 70.0f;
+		const float Step = HitEnemyCount > 1 ? SpreadDegrees / static_cast<float>(HitEnemyCount - 1) : 0.0f;
+		for (int32 Index = 0; Index < HitEnemyCount; ++Index)
+		{
+			const float YawOffset = -SpreadDegrees * 0.5f + Step * static_cast<float>(Index);
+			const FVector SpreadDirection = FirstPersonCamera->GetForwardVector().RotateAngleAxis(YawOffset, FVector::UpVector).GetSafeNormal2D();
+			HitEnemies[Index]->ApplyKick(SpreadDirection);
 		}
 	}
 
@@ -187,14 +211,21 @@ void AOBCharacter::Kick()
 
 void AOBCharacter::Dodge()
 {
-	if (bDead || !bDodgeReady)
+	if (bDead)
 	{
+		return;
+	}
+
+	if (!bDodgeReady)
+	{
+		OnPlayerDodgeFailed(FText::FromString(TEXT("Dodge cooldown")));
 		return;
 	}
 
 	FVector DodgeDirection = FVector::ZeroVector;
 	if (!TryFindSafeDodgeDirection(DodgeDirection))
 	{
+		OnPlayerDodgeFailed(FText::FromString(TEXT("No safe space")));
 		return;
 	}
 
@@ -220,7 +251,35 @@ void AOBCharacter::RecoverBullet()
 	}
 }
 
+void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& SpawnRotation)
+{
+	bDead = false;
+	bKickReady = true;
+	bDodgeReady = true;
+	bDodging = false;
+	ActiveDodgeDirection = FVector::ZeroVector;
+	ActiveDodgeElapsed = 0.0f;
+	ActiveDodgePreviousAlpha = 0.0f;
+
+	GetWorldTimerManager().ClearTimer(KickCooldownTimerHandle);
+	GetWorldTimerManager().ClearTimer(DodgeCooldownTimerHandle);
+
+	SetActorLocationAndRotation(SpawnLocation, SpawnRotation, false, nullptr, ETeleportType::TeleportPhysics);
+	if (Controller)
+	{
+		Controller->SetControlRotation(SpawnRotation);
+	}
+
+	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	GetCharacterMovement()->StopMovementImmediately();
+}
+
 void AOBCharacter::Die()
+{
+	DieWithReason(FText::FromString(TEXT("Caught by enemy")));
+}
+
+void AOBCharacter::DieWithReason(const FText& DeathReason)
 {
 	if (bDead)
 	{
@@ -237,7 +296,7 @@ void AOBCharacter::Die()
 
 	if (AOBGameState* OneBulletState = GetWorld()->GetGameState<AOBGameState>())
 	{
-		OneBulletState->SetGameOver(true);
+		OneBulletState->SetGameOverWithReason(true, DeathReason);
 	}
 }
 
@@ -245,8 +304,10 @@ void AOBCharacter::RestartLevel()
 {
 	if (bDead)
 	{
-		const FName LevelName = *UGameplayStatics::GetCurrentLevelName(this, true);
-		UGameplayStatics::OpenLevel(this, LevelName);
+		if (AOBGameMode* OneBulletMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOBGameMode>() : nullptr)
+		{
+			OneBulletMode->RestartRun(this);
+		}
 	}
 }
 
@@ -258,6 +319,21 @@ void AOBCharacter::ResetKick()
 void AOBCharacter::ResetDodge()
 {
 	bDodgeReady = true;
+}
+
+float AOBCharacter::GetDodgeCooldownRemaining() const
+{
+	return GetWorldTimerManager().GetTimerRemaining(DodgeCooldownTimerHandle);
+}
+
+float AOBCharacter::GetDodgeCooldownNormalized() const
+{
+	if (DodgeCooldown <= KINDA_SMALL_NUMBER)
+	{
+		return 0.0f;
+	}
+
+	return FMath::Clamp(GetDodgeCooldownRemaining() / DodgeCooldown, 0.0f, 1.0f);
 }
 
 void AOBCharacter::UpdateDodge(float DeltaSeconds)

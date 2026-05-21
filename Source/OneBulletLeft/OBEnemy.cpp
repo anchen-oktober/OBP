@@ -189,6 +189,8 @@ void AOBEnemy::TryTouchKill()
 
 	if (FVector::DistSquared2D(GetActorLocation(), PlayerTarget->GetActorLocation()) <= FMath::Square(EffectiveTouchKillRadius))
 	{
-		PlayerTarget->Die();
+		PlayerTarget->DieWithReason(EnemyType == EOBEnemyType::Heavy
+			? FText::FromString(TEXT("Crushed by Heavy"))
+			: FText::FromString(TEXT("Caught by Fast")));
 	}
 }

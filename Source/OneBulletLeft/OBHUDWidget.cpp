@@ -1,8 +1,11 @@
 #include "OBHUDWidget.h"
 
 #include "Components/Border.h"
+#include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
+#include "OBCharacter.h"
 
 void UOBHUDWidget::NativeConstruct()
 {
@@ -47,10 +50,31 @@ void UOBHUDWidget::RefreshFromGameState()
 		bChanged = true;
 	}
 
-	if (bChanged)
+	CurrentSurvivalTime = OneBulletState->SurvivalTime;
+	CurrentLastRunTime = OneBulletState->LastRunTime;
+	CurrentBestKillCount = OneBulletState->BestKillCount;
+	CurrentDeathReason = OneBulletState->DeathReason;
+
+	if (const AOBCharacter* Player = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0)))
+	{
+		const bool bNewDodgeReady = Player->IsDodgeReady();
+		const float NewDodgeCooldownNormalized = Player->GetDodgeCooldownNormalized();
+		if (bCurrentDodgeReady != bNewDodgeReady || !FMath::IsNearlyEqual(CurrentDodgeCooldownNormalized, NewDodgeCooldownNormalized, 0.01f))
+		{
+			bCurrentDodgeReady = bNewDodgeReady;
+			CurrentDodgeCooldownNormalized = NewDodgeCooldownNormalized;
+			OnDodgeCooldownChanged(bCurrentDodgeReady, CurrentDodgeCooldownNormalized);
+			bChanged = true;
+		}
+	}
+
+	if (bChanged || bCurrentGameOver)
 	{
 		ApplyHudState();
-		OnHudStateRefreshed(CurrentBulletState, CurrentKillCount, bCurrentGameOver);
+		if (bChanged)
+		{
+			OnHudStateRefreshed(CurrentBulletState, CurrentKillCount, bCurrentGameOver);
+		}
 	}
 }
 
@@ -77,6 +101,31 @@ void UOBHUDWidget::ApplyHudState()
 	if (RestartText)
 	{
 		RestartText->SetVisibility(bCurrentGameOver ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+
+	if (DeathStatsText)
+	{
+		const int32 RoundedTime = FMath::RoundToInt(CurrentLastRunTime);
+		DeathStatsText->SetText(FText::Format(DeathStatsFormat, CurrentDeathReason, FText::AsNumber(CurrentKillCount), FText::AsNumber(RoundedTime), FText::AsNumber(CurrentBestKillCount)));
+		DeathStatsText->SetVisibility(bCurrentGameOver ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+
+	if (DodgeStatusText)
+	{
+		if (bCurrentDodgeReady)
+		{
+			DodgeStatusText->SetText(DodgeReadyText);
+		}
+		else
+		{
+			const int32 RemainingTenths = FMath::CeilToInt(CurrentDodgeCooldownNormalized * 10.0f);
+			DodgeStatusText->SetText(FText::Format(DodgeCooldownFormat, FText::AsNumber(RemainingTenths / 10.0f)));
+		}
+	}
+
+	if (DodgeCooldownBar)
+	{
+		DodgeCooldownBar->SetPercent(bCurrentDodgeReady ? 1.0f : 1.0f - CurrentDodgeCooldownNormalized);
 	}
 
 	if (DeathFade)
