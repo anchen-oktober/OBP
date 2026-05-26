@@ -6,9 +6,14 @@
 #include "OBCharacter.generated.h"
 
 class UCameraComponent;
+class UCameraShakeBase;
+class UAnimationAsset;
+class UAnimInstance;
+class USpringArmComponent;
 class USoundBase;
+class AOBBulletPickup;
 
-UCLASS()
+UCLASS(PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API AOBCharacter : public ACharacter
 {
 	GENERATED_BODY()
@@ -24,105 +29,207 @@ public:
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
+	TObjectPtr<USpringArmComponent> ThirdPersonSpringArm;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
+	TObjectPtr<UCameraComponent> ThirdPersonCamera;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
 	TObjectPtr<USkeletalMeshComponent> FullBodyShadowMesh;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Visual")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Visual")
 	bool bHideHeadForFirstPerson = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Shooting")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|View")
+	bool bStartInThirdPerson = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|View")
+	float ThirdPersonCameraDistance = 360.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|View")
+	FVector ThirdPersonCameraOffset = FVector(0.0f, 40.0f, 62.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|View")
+	bool bThirdPersonCameraLag = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|View")
+	float ThirdPersonCameraLagSpeed = 14.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Modes")
+	bool bStartImmortal = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Shooting")
 	float ShootRange = 5000.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Kick")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Shooting|Feel")
+	float RecoilPitchImpulse = 1.8f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Shooting|Feel")
+	float RecoilYawRandomness = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Shooting|Feel")
+	float RecoilRecoverySpeed = 11.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Shooting|Feel")
+	TSubclassOf<UCameraShakeBase> ShootCameraShake;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Shooting|Feel")
+	float HitStopDuration = 0.045f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Shooting|Feel", meta=(ClampMin="0.01", ClampMax="1.0"))
+	float HitStopTimeDilation = 0.12f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pickup|Feel")
+	float PickupStopDuration = 0.025f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick")
 	float KickRange = 320.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Kick")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick")
 	float KickRadius = 125.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Kick")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick")
 	float KickCooldown = 2.4f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Dodge")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	TObjectPtr<UAnimationAsset> KickAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	float KickAnimationDuration = 0.55f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	TObjectPtr<UAnimationAsset> DeathAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	TObjectPtr<UAnimationAsset> IdleAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	TObjectPtr<UAnimationAsset> RunAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	bool bUseSimpleLocomotionAnimations = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(EditCondition="bUseSimpleLocomotionAnimations", ClampMin="0.0"))
+	float RunAnimationMinSpeed = 10.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
 	float DodgeDistance = 420.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Dodge")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
 	float DodgeDuration = 0.18f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Dodge")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
 	float DodgeCooldown = 1.15f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Dodge")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
 	float DodgeEnemyClearance = 180.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Dodge")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
 	bool bPreferMovementDirectionDodge = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Dodge")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
 	FKey DodgeKey = EKeys::LeftShift;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Audio")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
+	FKey SecondaryDodgeKey = EKeys::RightShift;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
 	TObjectPtr<USoundBase> ShootSound;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Audio")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
 	TObjectPtr<USoundBase> DryFireSound;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Audio")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
 	TObjectPtr<USoundBase> KickSound;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Audio")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
 	TObjectPtr<USoundBase> DodgeSound;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="One Bullet|Audio")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
 	TObjectPtr<USoundBase> DeathSound;
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
+	TObjectPtr<USoundBase> HitConfirmSound;
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void Shoot();
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void Kick();
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void Dodge();
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void RecoverBullet();
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
+	void ConfirmPickupFeedback(const FVector& PickupLocation);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|View")
+	void ToggleViewMode();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|View")
+	void SetThirdPersonView(bool bUseThirdPerson);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Modes")
+	void ToggleImmortalMode();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void ResetForNewRun(const FVector& SpawnLocation, const FRotator& SpawnRotation);
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void Die();
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void DieWithReason(const FText& DeathReason);
 
-	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|Events")
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
 	void OnPlayerShoot(const FVector& TraceStart, const FVector& TraceEnd, const FVector& ImpactLocation, bool bHitSomething, bool bHitEnemy);
 
-	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|Events")
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
+	void OnPlayerHitConfirmed(const FVector& ImpactLocation);
+
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
+	void OnPlayerBulletRecovered(const FVector& PickupLocation);
+
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
 	void OnPlayerDryFire();
 
-	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|Events")
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
 	void OnPlayerKick(const FVector& KickStart, const FVector& KickEnd, int32 HitEnemyCount);
 
-	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|Events")
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
 	void OnPlayerDodge(const FVector& DodgeDirection);
 
-	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|Events")
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
 	void OnPlayerDodgeFailed(const FText& FailReason);
 
-	UFUNCTION(BlueprintImplementableEvent, Category="One Bullet|Events")
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
 	void OnPlayerDeath();
 
-	UFUNCTION(BlueprintPure, Category="One Bullet")
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
+	void OnPlayerViewModeChanged(bool bNowThirdPerson);
+
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
+	void OnPlayerImmortalModeChanged(bool bNowImmortal);
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings")
 	bool IsDead() const { return bDead; }
 
-	UFUNCTION(BlueprintPure, Category="One Bullet|Dodge")
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|View")
+	bool IsThirdPersonView() const { return bThirdPersonView; }
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Modes")
+	bool IsImmortalMode() const { return bImmortalMode; }
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Dodge")
 	bool IsDodgeReady() const { return bDodgeReady; }
 
-	UFUNCTION(BlueprintPure, Category="One Bullet|Dodge")
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Dodge")
 	float GetDodgeCooldownRemaining() const;
 
-	UFUNCTION(BlueprintPure, Category="One Bullet|Dodge")
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Dodge")
 	float GetDodgeCooldownNormalized() const;
 
 protected:
@@ -130,13 +237,22 @@ protected:
 	bool bKickReady = true;
 	bool bDodgeReady = true;
 	bool bDodging = false;
+	bool bThirdPersonView = false;
+	bool bImmortalMode = false;
 
 	FVector ActiveDodgeDirection = FVector::ZeroVector;
 	float ActiveDodgeElapsed = 0.0f;
 	float ActiveDodgePreviousAlpha = 0.0f;
+	float RemainingRecoilPitch = 0.0f;
+	bool bPlayingActionAnimation = false;
+	UAnimationAsset* ActiveLocomotionAnimation = nullptr;
 
 	FTimerHandle KickCooldownTimerHandle;
 	FTimerHandle DodgeCooldownTimerHandle;
+	FTimerHandle FeelStopTimerHandle;
+	FTimerHandle ActionAnimationTimerHandle;
+
+	TSubclassOf<UAnimInstance> DefaultPlayerAnimClass;
 
 	void MoveForward(float Value);
 	void MoveRight(float Value);
@@ -146,11 +262,19 @@ protected:
 	void ResetKick();
 	void ResetDodge();
 	void UpdateDodge(float DeltaSeconds);
-	void PollDodgeInput();
+	void UpdateRecoil(float DeltaSeconds);
+	void ApplyFeelStop(float Duration);
+	void ResetFeelStop();
 	bool TryFindSafeDodgeDirection(FVector& OutDirection) const;
 	bool EvaluateDodgeDirection(const FVector& Direction, float& OutScore) const;
 	void ConfigurePlayerMesh();
 	void HideFirstPersonHead();
 	void ConfigureFullBodyShadowMesh();
-	void DropBulletAt(const FVector& Location);
+	void PlayActionAnimation(UAnimationAsset* Animation, float Duration);
+	void PlayDeathAnimation();
+	void UpdateSimpleLocomotionAnimation();
+	void RestoreMovementAnimation();
+	void ApplyViewMode();
+	UCameraComponent* GetShootingCamera() const;
+	AOBBulletPickup* DropBulletAt(const FVector& Location);
 };

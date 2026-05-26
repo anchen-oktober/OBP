@@ -6,7 +6,7 @@
 
 class UOBHUDWidget;
 
-UCLASS()
+UCLASS(PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API AOBHUD : public AHUD
 {
 	GENERATED_BODY()
@@ -14,9 +14,9 @@ class ONEBULLETLEFT_API AOBHUD : public AHUD
 public:
 	virtual void BeginPlay() override;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="One Bullet|HUD")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="OneBulletSettings|HUD")
 	TSubclassOf<UOBHUDWidget> HUDWidgetClass;
 
-	UPROPERTY(BlueprintReadOnly, Category="One Bullet|HUD")
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings|HUD")
 	TObjectPtr<UOBHUDWidget> HUDWidget;
 };

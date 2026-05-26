@@ -106,6 +106,19 @@ def set_prop(obj, prop, value):
         unreal.log_warning(f"Could not set {prop} on {obj}: {exc}")
 
 
+def set_asset_if_empty(obj, prop, asset_path):
+    try:
+        if obj.get_editor_property(prop):
+            return
+        asset = unreal.load_asset(asset_path)
+        if asset:
+            obj.set_editor_property(prop, asset)
+        else:
+            unreal.log_warning(f"Could not load default asset for {prop}: {asset_path}")
+    except Exception as exc:
+        unreal.log_warning(f"Could not set default asset {prop} on {obj}: {exc}")
+
+
 ensure_dir("/Game/OneBullet")
 ensure_dir(BP_DIR)
 
@@ -125,13 +138,27 @@ wbp_hud_cdo = cdo(wbp_hud)
 
 fast_cdo = cdo(bp_enemy_fast)
 set_prop(fast_cdo, "enemy_type", unreal.OBEnemyType.FAST)
-set_prop(fast_cdo, "fast_speed", 820.0)
+set_prop(fast_cdo, "fast_speed", 850.0)
 set_prop(fast_cdo, "heavy_speed", 260.0)
+set_prop(fast_cdo, "shot_stagger_strength", 430.0)
+set_prop(fast_cdo, "use_surround_movement", True)
+set_prop(fast_cdo, "surround_front_arc_degrees", 150.0)
+set_prop(fast_cdo, "fast_surround_radius", 72.0)
+set_prop(fast_cdo, "death_feedback_duration", 0.12)
+set_asset_if_empty(fast_cdo, "death_sound", "/Game/Sound/cue/Hit_Generic_2-1_Cue")
+set_asset_if_empty(fast_cdo, "death_animation", "/Game/Characters/Mannequins/Anims/Death/MM_Death_Front_01")
 
 heavy_cdo = cdo(bp_enemy_heavy)
 set_prop(heavy_cdo, "enemy_type", unreal.OBEnemyType.HEAVY)
 set_prop(heavy_cdo, "fast_speed", 760.0)
 set_prop(heavy_cdo, "heavy_speed", 230.0)
+set_prop(heavy_cdo, "shot_stagger_strength", 145.0)
+set_prop(heavy_cdo, "use_surround_movement", True)
+set_prop(heavy_cdo, "surround_front_arc_degrees", 150.0)
+set_prop(heavy_cdo, "heavy_surround_radius", 104.0)
+set_prop(heavy_cdo, "death_feedback_duration", 0.16)
+set_asset_if_empty(heavy_cdo, "death_sound", "/Game/Sound/cue/Hit_Generic_5-1_Cue")
+set_asset_if_empty(heavy_cdo, "death_animation", "/Game/Characters/Mannequins/Anims/Death/MM_Death_Back_01")
 
 pickup_cdo = cdo(bp_pickup)
 set_prop(pickup_cdo, "use_native_presentation_animation", True)
@@ -139,18 +166,38 @@ set_prop(pickup_cdo, "mesh_base_height", 12.0)
 set_prop(pickup_cdo, "bob_height", 4.0)
 set_prop(pickup_cdo, "bob_speed", 5.0)
 set_prop(pickup_cdo, "spin_speed", 180.0)
+set_prop(pickup_cdo, "pickup_radius", 105.0)
+set_prop(pickup_cdo, "magnet_radius", 235.0)
+set_prop(pickup_cdo, "magnet_speed", 780.0)
+set_prop(pickup_cdo, "pulse_scale", 0.12)
+set_prop(pickup_cdo, "beacon_intensity", 2600.0)
+set_prop(pickup_cdo, "beacon_pulse_amount", 900.0)
+set_asset_if_empty(pickup_cdo, "pickup_sound", "/Game/Sound/cue/Special_Collectible_26-1_Cue")
 
 char_cdo = cdo(bp_character)
 set_prop(char_cdo, "hide_head_for_first_person", True)
 set_prop(char_cdo, "kick_cooldown", 2.4)
 set_prop(char_cdo, "kick_range", 320.0)
 set_prop(char_cdo, "kick_radius", 125.0)
+set_asset_if_empty(char_cdo, "kick_animation", "/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_01")
+set_prop(char_cdo, "kick_animation_duration", 0.55)
 set_prop(char_cdo, "shoot_range", 5000.0)
 set_prop(char_cdo, "dodge_distance", 420.0)
 set_prop(char_cdo, "dodge_duration", 0.18)
 set_prop(char_cdo, "dodge_cooldown", 1.15)
 set_prop(char_cdo, "dodge_enemy_clearance", 180.0)
 set_prop(char_cdo, "prefer_movement_direction_dodge", True)
+set_prop(char_cdo, "recoil_pitch_impulse", 1.8)
+set_prop(char_cdo, "recoil_yaw_randomness", 0.35)
+set_prop(char_cdo, "recoil_recovery_speed", 11.0)
+set_prop(char_cdo, "hit_stop_duration", 0.045)
+set_prop(char_cdo, "hit_stop_time_dilation", 0.12)
+set_prop(char_cdo, "pickup_stop_duration", 0.025)
+set_asset_if_empty(char_cdo, "shoot_sound", "/Game/Sound/cue/Gunshot_7-1_Cue")
+set_asset_if_empty(char_cdo, "hit_confirm_sound", "/Game/Sound/cue/Hit_Generic_5-1_Cue")
+set_asset_if_empty(char_cdo, "dry_fire_sound", "/Game/Sound/cue/Interface_1-1_Cue")
+set_asset_if_empty(char_cdo, "kick_sound", "/Game/Sound/cue/Punch_2-1_Cue")
+set_asset_if_empty(char_cdo, "dodge_sound", "/Game/Sound/cue/Whoosh_1-1_Cue")
 
 gm_cdo = cdo(bp_game_mode)
 set_prop(gm_cdo, "default_pawn_class", bp_class(bp_character))

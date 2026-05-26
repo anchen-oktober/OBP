@@ -1,6 +1,7 @@
 #include "OBHUDWidget.h"
 
 #include "Components/Border.h"
+#include "Components/Button.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 #include "Engine/World.h"
@@ -66,9 +67,15 @@ void UOBHUDWidget::RefreshFromGameState()
 			OnDodgeCooldownChanged(bCurrentDodgeReady, CurrentDodgeCooldownNormalized);
 			bChanged = true;
 		}
+
+		if (bCurrentImmortalMode != Player->IsImmortalMode())
+		{
+			bCurrentImmortalMode = Player->IsImmortalMode();
+			bChanged = true;
+		}
 	}
 
-	if (bChanged || bCurrentGameOver)
+	if (bChanged || bCurrentGameOver || CurrentBulletState == EBulletState::Lost)
 	{
 		ApplyHudState();
 		if (bChanged)
@@ -85,7 +92,12 @@ void UOBHUDWidget::ApplyHudState()
 	if (BulletStatusText)
 	{
 		BulletStatusText->SetText(bBulletReady ? BulletReadyText : BulletLostText);
-		BulletStatusText->SetColorAndOpacity(bBulletReady ? BulletReadyColor : BulletLostColor);
+		FLinearColor BulletColor = bBulletReady ? BulletReadyColor : BulletLostColor;
+		if (!bBulletReady && GetWorld())
+		{
+			BulletColor.A = 0.72f + 0.28f * (0.5f + 0.5f * FMath::Sin(GetWorld()->GetTimeSeconds() * 8.0f));
+		}
+		BulletStatusText->SetColorAndOpacity(BulletColor);
 	}
 
 	if (KillCountText)
@@ -126,6 +138,22 @@ void UOBHUDWidget::ApplyHudState()
 	if (DodgeCooldownBar)
 	{
 		DodgeCooldownBar->SetPercent(bCurrentDodgeReady ? 1.0f : 1.0f - CurrentDodgeCooldownNormalized);
+	}
+
+	if (LostWarningText)
+	{
+		LostWarningText->SetText(LostWarningMessage);
+		LostWarningText->SetVisibility(!bBulletReady && !bCurrentGameOver ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+
+	if (ImmortalModeTxt)
+	{
+		ImmortalModeTxt->SetVisibility(bCurrentImmortalMode ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+
+	if (ChangeViewBtn)
+	{
+		ChangeViewBtn->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	if (DeathFade)

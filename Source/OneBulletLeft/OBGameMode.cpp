@@ -200,6 +200,7 @@ bool AOBGameMode::SpawnEnemyOfType(EOBEnemyType Type)
 	if (Enemy)
 	{
 		Enemy->Configure(Type);
+		Enemy->TriggerSpawnFeedback();
 		return true;
 	}
 
@@ -268,6 +269,23 @@ AOBBulletPickup* AOBGameMode::SpawnBulletPickup(const FVector& DropLocation)
 	return GetWorld()->SpawnActor<AOBBulletPickup>(BulletPickupClass, SpawnLocation, FRotator::ZeroRotator, Params);
 }
 
+void AOBGameMode::PlayBulletTrail(const FVector& TraceStart, const FVector& TraceEnd)
+{
+	PlayBulletFlight(TraceStart, TraceEnd, nullptr);
+}
+
+void AOBGameMode::PlayBulletFlight(const FVector& TraceStart, const FVector& TraceEnd, AOBBulletPickup* DestinationPickup)
+{
+	if (BulletPickupClass)
+	{
+		const AOBBulletPickup* PickupDefaults = BulletPickupClass->GetDefaultObject<AOBBulletPickup>();
+		if (PickupDefaults)
+		{
+			PickupDefaults->PlayTrailEffectToPickup(this, TraceStart, TraceEnd, DestinationPickup);
+		}
+	}
+}
+
 void AOBGameMode::RestartRun(AOBCharacter* Player)
 {
 	GetWorldTimerManager().ClearTimer(SpawnTimerHandle);
@@ -300,7 +318,16 @@ int32 AOBGameMode::CountLiveEnemies() const
 {
 	TArray<AActor*> Enemies;
 	UGameplayStatics::GetAllActorsOfClass(this, AOBEnemy::StaticClass(), Enemies);
-	return Enemies.Num();
+	int32 LiveEnemyCount = 0;
+	for (AActor* EnemyActor : Enemies)
+	{
+		const AOBEnemy* Enemy = Cast<AOBEnemy>(EnemyActor);
+		if (Enemy && !Enemy->IsDead())
+		{
+			++LiveEnemyCount;
+		}
+	}
+	return LiveEnemyCount;
 }
 
 void AOBGameMode::RestartSpawning()
@@ -327,7 +354,7 @@ void AOBGameMode::DestroyRunActors()
 {
 	for (TActorIterator<AOBEnemy> It(GetWorld()); It; ++It)
 	{
-		It->Destroy();
+		It->Disappear();
 	}
 
 	for (TActorIterator<AOBBulletPickup> It(GetWorld()); It; ++It)

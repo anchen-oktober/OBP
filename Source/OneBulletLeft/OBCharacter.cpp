@@ -1,18 +1,31 @@
 #include "OBCharacter.h"
 
+#include "Animation/AnimationAsset.h"
+#include "Animation/AnimSequence.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/CameraShakeBase.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "DrawDebugHelpers.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/SpringArmComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "OBEnemy.h"
 #include "OBGameMode.h"
 #include "OBGameState.h"
+
+namespace
+{
+bool IsAnimationCompatibleWithMesh(const UAnimationAsset* Animation, const USkeletalMeshComponent* MeshComponent)
+{
+	const USkeletalMesh* SkeletalMesh = MeshComponent ? MeshComponent->GetSkeletalMeshAsset() : nullptr;
+	return !Animation || !SkeletalMesh || !Animation->GetSkeleton() || Animation->GetSkeleton() == SkeletalMesh->GetSkeleton();
+}
+}
 
 AOBCharacter::AOBCharacter()
 {
@@ -28,6 +41,19 @@ AOBCharacter::AOBCharacter()
 	FirstPersonCamera->SetRelativeLocation(FVector(-10.0f, 0.0f, 70.0f));
 	FirstPersonCamera->bUsePawnControlRotation = true;
 
+	ThirdPersonSpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("ThirdPersonSpringArm"));
+	ThirdPersonSpringArm->SetupAttachment(GetCapsuleComponent());
+	ThirdPersonSpringArm->bUsePawnControlRotation = true;
+	ThirdPersonSpringArm->TargetArmLength = ThirdPersonCameraDistance;
+	ThirdPersonSpringArm->SocketOffset = ThirdPersonCameraOffset;
+	ThirdPersonSpringArm->bEnableCameraLag = bThirdPersonCameraLag;
+	ThirdPersonSpringArm->CameraLagSpeed = ThirdPersonCameraLagSpeed;
+
+	ThirdPersonCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("ThirdPersonCamera"));
+	ThirdPersonCamera->SetupAttachment(ThirdPersonSpringArm, USpringArmComponent::SocketName);
+	ThirdPersonCamera->bUsePawnControlRotation = false;
+	ThirdPersonCamera->SetActive(false);
+
 	FullBodyShadowMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("FullBodyShadowMesh"));
 	FullBodyShadowMesh->SetupAttachment(GetCapsuleComponent());
 
@@ -39,19 +65,29 @@ void AOBCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	if (GetMesh())
+	{
+		DefaultPlayerAnimClass = GetMesh()->GetAnimClass();
+		ConfigureFullBodyShadowMesh();
+	}
+
 	if (AOBGameState* OneBulletState = GetWorld()->GetGameState<AOBGameState>())
 	{
 		OneBulletState->SetBulletReady(true);
 		OneBulletState->SetGameOver(false);
 	}
 
-	HideFirstPersonHead();
+	bThirdPersonView = bStartInThirdPerson;
+	bImmortalMode = bStartImmortal;
+	ApplyViewMode();
 }
 
 void AOBCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	UpdateDodge(DeltaSeconds);
+	UpdateRecoil(DeltaSeconds);
+	UpdateSimpleLocomotionAnimation();
 }
 
 void AOBCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -67,10 +103,17 @@ void AOBCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	PlayerInputComponent->BindAction(TEXT("Jump"), IE_Released, this, &ACharacter::StopJumping);
 	PlayerInputComponent->BindAction(TEXT("Shoot"), IE_Pressed, this, &AOBCharacter::Shoot);
 	PlayerInputComponent->BindAction(TEXT("Kick"), IE_Pressed, this, &AOBCharacter::Kick);
-	PlayerInputComponent->BindAction(TEXT("Dodge"), IE_Pressed, this, &AOBCharacter::Dodge);
 	PlayerInputComponent->BindAction(TEXT("Restart"), IE_Pressed, this, &AOBCharacter::RestartLevel);
-	PlayerInputComponent->BindKey(EKeys::LeftShift, IE_Pressed, this, &AOBCharacter::Dodge);
-	PlayerInputComponent->BindKey(EKeys::RightShift, IE_Pressed, this, &AOBCharacter::Dodge);
+	if (DodgeKey.IsValid())
+	{
+		PlayerInputComponent->BindKey(DodgeKey, IE_Pressed, this, &AOBCharacter::Dodge);
+	}
+	if (SecondaryDodgeKey.IsValid() && SecondaryDodgeKey != DodgeKey)
+	{
+		PlayerInputComponent->BindKey(SecondaryDodgeKey, IE_Pressed, this, &AOBCharacter::Dodge);
+	}
+	PlayerInputComponent->BindKey(EKeys::One, IE_Pressed, this, &AOBCharacter::ToggleViewMode);
+	PlayerInputComponent->BindKey(EKeys::Two, IE_Pressed, this, &AOBCharacter::ToggleImmortalMode);
 }
 
 void AOBCharacter::MoveForward(float Value)
@@ -129,8 +172,21 @@ void AOBCharacter::Shoot()
 		UGameplayStatics::PlaySoundAtLocation(this, ShootSound, GetActorLocation());
 	}
 
-	const FVector Start = FirstPersonCamera->GetComponentLocation();
-	const FVector End = Start + FirstPersonCamera->GetForwardVector() * ShootRange;
+	AddControllerPitchInput(-RecoilPitchImpulse);
+	AddControllerYawInput(FMath::FRandRange(-RecoilYawRandomness, RecoilYawRandomness));
+	RemainingRecoilPitch += RecoilPitchImpulse;
+
+	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
+	{
+		if (ShootCameraShake && PlayerController->PlayerCameraManager)
+		{
+			PlayerController->PlayerCameraManager->StartCameraShake(ShootCameraShake);
+		}
+	}
+
+	const UCameraComponent* ShootingCamera = GetShootingCamera();
+	const FVector Start = ShootingCamera->GetComponentLocation();
+	const FVector End = Start + ShootingCamera->GetForwardVector() * ShootRange;
 
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(OneBulletShoot), true, this);
@@ -143,12 +199,26 @@ void AOBCharacter::Shoot()
 	{
 		if (AOBEnemy* Enemy = Cast<AOBEnemy>(Hit.GetActor()))
 		{
-			Enemy->KillAndDropBullet(Enemy->GetActorLocation());
+			OnPlayerHitConfirmed(Hit.ImpactPoint);
+			if (HitConfirmSound)
+			{
+				UGameplayStatics::PlaySoundAtLocation(this, HitConfirmSound, Hit.ImpactPoint);
+			}
+			ApplyFeelStop(HitStopDuration);
+			Enemy->KillAndDropBullet(Hit.ImpactPoint);
+			if (AOBGameMode* OneBulletMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOBGameMode>() : nullptr)
+			{
+				OneBulletMode->PlayBulletFlight(Start, BulletLocation, Enemy->GetDroppedBulletPickup());
+			}
 			return;
 		}
 	}
 
-	DropBulletAt(BulletLocation);
+	AOBBulletPickup* DroppedPickup = DropBulletAt(BulletLocation);
+	if (AOBGameMode* OneBulletMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOBGameMode>() : nullptr)
+	{
+		OneBulletMode->PlayBulletFlight(Start, BulletLocation, DroppedPickup);
+	}
 }
 
 void AOBCharacter::Kick()
@@ -160,6 +230,7 @@ void AOBCharacter::Kick()
 
 	bKickReady = false;
 	GetWorldTimerManager().SetTimer(KickCooldownTimerHandle, this, &AOBCharacter::ResetKick, KickCooldown, false);
+	PlayActionAnimation(KickAnimation, KickAnimationDuration);
 	if (KickSound)
 	{
 		UGameplayStatics::PlaySoundAtLocation(this, KickSound, GetActorLocation());
@@ -251,6 +322,35 @@ void AOBCharacter::RecoverBullet()
 	}
 }
 
+void AOBCharacter::ConfirmPickupFeedback(const FVector& PickupLocation)
+{
+	OnPlayerBulletRecovered(PickupLocation);
+	ApplyFeelStop(PickupStopDuration);
+}
+
+void AOBCharacter::ToggleViewMode()
+{
+	SetThirdPersonView(!bThirdPersonView);
+}
+
+void AOBCharacter::SetThirdPersonView(bool bUseThirdPerson)
+{
+	if (bThirdPersonView == bUseThirdPerson)
+	{
+		return;
+	}
+
+	bThirdPersonView = bUseThirdPerson;
+	ApplyViewMode();
+	OnPlayerViewModeChanged(bThirdPersonView);
+}
+
+void AOBCharacter::ToggleImmortalMode()
+{
+	bImmortalMode = !bImmortalMode;
+	OnPlayerImmortalModeChanged(bImmortalMode);
+}
+
 void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& SpawnRotation)
 {
 	bDead = false;
@@ -260,9 +360,13 @@ void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& 
 	ActiveDodgeDirection = FVector::ZeroVector;
 	ActiveDodgeElapsed = 0.0f;
 	ActiveDodgePreviousAlpha = 0.0f;
+	RemainingRecoilPitch = 0.0f;
 
 	GetWorldTimerManager().ClearTimer(KickCooldownTimerHandle);
 	GetWorldTimerManager().ClearTimer(DodgeCooldownTimerHandle);
+	GetWorldTimerManager().ClearTimer(ActionAnimationTimerHandle);
+	RestoreMovementAnimation();
+	ResetFeelStop();
 
 	SetActorLocationAndRotation(SpawnLocation, SpawnRotation, false, nullptr, ETeleportType::TeleportPhysics);
 	if (Controller)
@@ -281,13 +385,14 @@ void AOBCharacter::Die()
 
 void AOBCharacter::DieWithReason(const FText& DeathReason)
 {
-	if (bDead)
+	if (bDead || bImmortalMode)
 	{
 		return;
 	}
 
 	bDead = true;
 	GetCharacterMovement()->DisableMovement();
+	PlayDeathAnimation();
 	OnPlayerDeath();
 	if (DeathSound)
 	{
@@ -319,6 +424,36 @@ void AOBCharacter::ResetKick()
 void AOBCharacter::ResetDodge()
 {
 	bDodgeReady = true;
+}
+
+void AOBCharacter::UpdateRecoil(float DeltaSeconds)
+{
+	if (RemainingRecoilPitch <= KINDA_SMALL_NUMBER || !Controller)
+	{
+		return;
+	}
+
+	const float Recovery = FMath::Min(RemainingRecoilPitch, RecoilRecoverySpeed * DeltaSeconds);
+	AddControllerPitchInput(Recovery);
+	RemainingRecoilPitch -= Recovery;
+}
+
+void AOBCharacter::ApplyFeelStop(float Duration)
+{
+	if (!GetWorld() || Duration <= 0.0f)
+	{
+		return;
+	}
+
+	UGameplayStatics::SetGlobalTimeDilation(this, HitStopTimeDilation);
+	GetWorldTimerManager().ClearTimer(FeelStopTimerHandle);
+	GetWorldTimerManager().SetTimer(FeelStopTimerHandle, this, &AOBCharacter::ResetFeelStop, Duration * HitStopTimeDilation, false);
+}
+
+void AOBCharacter::ResetFeelStop()
+{
+	GetWorldTimerManager().ClearTimer(FeelStopTimerHandle);
+	UGameplayStatics::SetGlobalTimeDilation(this, 1.0f);
 }
 
 float AOBCharacter::GetDodgeCooldownRemaining() const
@@ -356,22 +491,6 @@ void AOBCharacter::UpdateDodge(float DeltaSeconds)
 	if (RawAlpha >= 1.0f || Hit.bBlockingHit)
 	{
 		bDodging = false;
-	}
-}
-
-void AOBCharacter::PollDodgeInput()
-{
-	if (bDead || !DodgeKey.IsValid())
-	{
-		return;
-	}
-
-	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
-	{
-		if (PlayerController->WasInputKeyJustPressed(DodgeKey))
-		{
-			Dodge();
-		}
 	}
 }
 
@@ -423,7 +542,7 @@ bool AOBCharacter::EvaluateDodgeDirection(const FVector& Direction, float& OutSc
 		FMath::Max(Capsule->GetScaledCapsuleRadius() - 4.0f, 8.0f),
 		FMath::Max(Capsule->GetScaledCapsuleHalfHeight() - 4.0f, 16.0f));
 
-	if (GetWorld()->SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Pawn, CapsuleShape, Params) && Hit.bBlockingHit)
+	if (GetWorld()->SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Visibility, CapsuleShape, Params) && Hit.bBlockingHit)
 	{
 		return false;
 	}
@@ -435,7 +554,7 @@ bool AOBCharacter::EvaluateDodgeDirection(const FVector& Direction, float& OutSc
 	for (AActor* Actor : Enemies)
 	{
 		const AOBEnemy* Enemy = Cast<AOBEnemy>(Actor);
-		if (!Enemy)
+		if (!Enemy || Enemy->IsDead())
 		{
 			continue;
 		}
@@ -478,7 +597,14 @@ void AOBCharacter::ConfigurePlayerMesh()
 	static ConstructorHelpers::FClassFinder<UAnimInstance> UnarmedAnimBP(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed"));
 	if (UnarmedAnimBP.Succeeded())
 	{
+		DefaultPlayerAnimClass = UnarmedAnimBP.Class;
 		GetMesh()->SetAnimInstanceClass(UnarmedAnimBP.Class);
+	}
+
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> DefaultKickAnimation(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_01.MM_Attack_01"));
+	if (DefaultKickAnimation.Succeeded())
+	{
+		KickAnimation = DefaultKickAnimation.Object;
 	}
 }
 
@@ -523,10 +649,148 @@ void AOBCharacter::HideFirstPersonHead()
 	GetMesh()->HideBoneByName(TEXT("neck_01"), EPhysBodyOp::PBO_None);
 }
 
-void AOBCharacter::DropBulletAt(const FVector& Location)
+void AOBCharacter::PlayActionAnimation(UAnimationAsset* Animation, float Duration)
+{
+	if (!Animation || !GetMesh())
+	{
+		return;
+	}
+
+	if (!IsAnimationCompatibleWithMesh(Animation, GetMesh()))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Skipping action animation %s: it uses a different skeleton than the player mesh."), *GetNameSafe(Animation));
+		return;
+	}
+
+	bPlayingActionAnimation = true;
+	GetMesh()->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+	GetMesh()->PlayAnimation(Animation, false);
+	if (FullBodyShadowMesh)
+	{
+		FullBodyShadowMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+		FullBodyShadowMesh->PlayAnimation(Animation, false);
+	}
+	GetWorldTimerManager().SetTimer(ActionAnimationTimerHandle, this, &AOBCharacter::RestoreMovementAnimation, FMath::Max(Duration, 0.01f), false);
+}
+
+void AOBCharacter::PlayDeathAnimation()
+{
+	if (!DeathAnimation || !GetMesh() || !IsAnimationCompatibleWithMesh(DeathAnimation, GetMesh()))
+	{
+		if (DeathAnimation && GetMesh())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Skipping death animation %s: it uses a different skeleton than the player mesh."), *GetNameSafe(DeathAnimation));
+		}
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(ActionAnimationTimerHandle);
+	bPlayingActionAnimation = true;
+	GetMesh()->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+	GetMesh()->PlayAnimation(DeathAnimation, false);
+	if (FullBodyShadowMesh)
+	{
+		FullBodyShadowMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+		FullBodyShadowMesh->PlayAnimation(DeathAnimation, false);
+	}
+}
+
+void AOBCharacter::UpdateSimpleLocomotionAnimation()
+{
+	if (!bUseSimpleLocomotionAnimations || bDead || bPlayingActionAnimation || !GetMesh())
+	{
+		return;
+	}
+
+	const bool bHasMovementInput = !GetPendingMovementInputVector().IsNearlyZero() || !GetLastMovementInputVector().IsNearlyZero();
+	UAnimationAsset* DesiredAnimation = bHasMovementInput && GetVelocity().SizeSquared2D() >= FMath::Square(RunAnimationMinSpeed)
+		? RunAnimation.Get()
+		: IdleAnimation.Get();
+	if (!DesiredAnimation || DesiredAnimation == ActiveLocomotionAnimation)
+	{
+		return;
+	}
+
+	ActiveLocomotionAnimation = DesiredAnimation;
+	if (!IsAnimationCompatibleWithMesh(DesiredAnimation, GetMesh()))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Skipping locomotion animation %s: it uses a different skeleton than the player mesh."), *GetNameSafe(DesiredAnimation));
+		return;
+	}
+
+	GetMesh()->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+	GetMesh()->PlayAnimation(DesiredAnimation, true);
+	if (FullBodyShadowMesh)
+	{
+		FullBodyShadowMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+		FullBodyShadowMesh->PlayAnimation(DesiredAnimation, true);
+	}
+}
+
+void AOBCharacter::RestoreMovementAnimation()
+{
+	bPlayingActionAnimation = false;
+	ActiveLocomotionAnimation = nullptr;
+	if (bUseSimpleLocomotionAnimations)
+	{
+		UpdateSimpleLocomotionAnimation();
+		return;
+	}
+
+	if (!DefaultPlayerAnimClass)
+	{
+		return;
+	}
+
+	GetMesh()->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+	GetMesh()->SetAnimInstanceClass(DefaultPlayerAnimClass);
+	if (FullBodyShadowMesh)
+	{
+		FullBodyShadowMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+		FullBodyShadowMesh->SetAnimInstanceClass(DefaultPlayerAnimClass);
+	}
+}
+
+void AOBCharacter::ApplyViewMode()
+{
+	if (!FirstPersonCamera || !ThirdPersonCamera || !ThirdPersonSpringArm)
+	{
+		return;
+	}
+
+	ThirdPersonSpringArm->TargetArmLength = ThirdPersonCameraDistance;
+	ThirdPersonSpringArm->SocketOffset = ThirdPersonCameraOffset;
+	ThirdPersonSpringArm->bEnableCameraLag = bThirdPersonCameraLag;
+	ThirdPersonSpringArm->CameraLagSpeed = ThirdPersonCameraLagSpeed;
+	FirstPersonCamera->SetActive(!bThirdPersonView);
+	ThirdPersonCamera->SetActive(bThirdPersonView);
+
+	if (!GetMesh() || !IsLocallyControlled())
+	{
+		return;
+	}
+
+	if (bThirdPersonView)
+	{
+		GetMesh()->UnHideBoneByName(TEXT("head"));
+		GetMesh()->UnHideBoneByName(TEXT("neck_01"));
+	}
+	else
+	{
+		HideFirstPersonHead();
+	}
+}
+
+UCameraComponent* AOBCharacter::GetShootingCamera() const
+{
+	return bThirdPersonView && ThirdPersonCamera ? ThirdPersonCamera : FirstPersonCamera;
+}
+
+AOBBulletPickup* AOBCharacter::DropBulletAt(const FVector& Location)
 {
 	if (AOBGameMode* OneBulletMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOBGameMode>() : nullptr)
 	{
-		OneBulletMode->SpawnBulletPickup(Location);
+		return OneBulletMode->SpawnBulletPickup(Location);
 	}
+	return nullptr;
 }

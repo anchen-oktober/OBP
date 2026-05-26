@@ -11,7 +11,7 @@ enum class EBulletState : uint8
 	Lost
 };
 
-UCLASS()
+UCLASS(PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API AOBGameState : public AGameStateBase
 {
 	GENERATED_BODY()
@@ -21,42 +21,42 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
-	UPROPERTY(BlueprintReadOnly, Category="One Bullet")
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings")
 	EBulletState BulletState = EBulletState::Ready;
 
-	UPROPERTY(BlueprintReadOnly, Category="One Bullet")
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings")
 	int32 KillCount = 0;
 
-	UPROPERTY(BlueprintReadOnly, Category="One Bullet")
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings")
 	bool bGameOver = false;
 
-	UPROPERTY(BlueprintReadOnly, Category="One Bullet")
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings")
 	float SurvivalTime = 0.0f;
 
-	UPROPERTY(BlueprintReadOnly, Category="One Bullet")
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings")
 	float LastRunTime = 0.0f;
 
-	UPROPERTY(BlueprintReadOnly, Category="One Bullet")
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings")
 	int32 BestKillCount = 0;
 
-	UPROPERTY(BlueprintReadOnly, Category="One Bullet")
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings")
 	FText DeathReason = FText::GetEmpty();
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	bool HasBullet() const { return BulletState == EBulletState::Ready; }
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void SetBulletReady(bool bReady);
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void AddKill();
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void SetGameOver(bool bNewGameOver);
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void SetGameOverWithReason(bool bNewGameOver, const FText& NewDeathReason);
 
-	UFUNCTION(BlueprintCallable, Category="One Bullet")
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void ResetRunState();
 };

@@ -15,7 +15,8 @@ public class OneBulletLeft : ModuleRules
 			"EnhancedInput",
 			"AIModule",
 			"NavigationSystem",
-			"UMG"
+			"UMG",
+			"Niagara"
 		});
 	}
 }
