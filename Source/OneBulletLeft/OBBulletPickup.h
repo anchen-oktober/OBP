@@ -10,6 +10,7 @@ class UPointLightComponent;
 class USoundBase;
 class UNiagaraSystem;
 class UMaterialInterface;
+class USceneComponent;
 class AOBCharacter;
 
 UCLASS(PrioritizeCategories = "OneBulletSettings")
@@ -27,7 +28,8 @@ public:
 	void PlayTrailEffect(UObject* WorldContextObject, const FVector& TraceStart, const FVector& TraceEnd) const;
 
 	void PlayTrailEffectToPickup(UObject* WorldContextObject, const FVector& TraceStart, const FVector& TraceEnd, AOBBulletPickup* DestinationPickup) const;
-	void BeginIncomingFlight();
+	void BeginIncomingFlight(const FVector& FlightStart);
+	void UpdateIncomingFlightLocation(const FVector& FlightLocation);
 	void CompleteIncomingFlight();
 
 protected:
@@ -45,6 +47,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
 	TObjectPtr<USoundBase> PickupSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pickup|Feedback")
+	TObjectPtr<UNiagaraSystem> PickupEffect;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Trail")
 	TObjectPtr<UNiagaraSystem> TrailNiagaraSystem;
@@ -81,6 +86,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Presentation")
 	bool bUseNativePresentationAnimation = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Presentation", meta=(DisplayName="Main Mesh Scale", ClampMin="0.01", UIMin="0.05", UIMax="0.5"))
+	float MainMeshScale = 0.2625f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Presentation")
 	float MeshBaseHeight = 12.0f;
@@ -125,4 +133,7 @@ protected:
 
 	bool bCollected = false;
 	bool bAwaitingIncomingFlight = false;
+	TWeakObjectPtr<USceneComponent> FlightDestinationParent;
+	FName FlightDestinationSocket = NAME_None;
+	FTransform FlightDestinationRelativeTransform = FTransform::Identity;
 };

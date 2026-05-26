@@ -59,7 +59,7 @@ void AOBBulletTrailActor::InitializeTrail(
 
 	if (DestinationPickup)
 	{
-		DestinationPickup->BeginIncomingFlight();
+		DestinationPickup->BeginIncomingFlight(StartLocation);
 	}
 
 	if (TrailSystem && TrailComponent)
@@ -72,6 +72,7 @@ void AOBBulletTrailActor::InitializeTrail(
 
 	if (TravelingBulletMesh)
 	{
+		TravelingBulletMesh->SetVisibility(!DestinationPickup);
 		TravelingBulletMesh->SetRelativeScale3D(FVector(FMath::Max(BulletScale, 0.01f)));
 		if (BulletMaterial)
 		{
@@ -80,6 +81,7 @@ void AOBBulletTrailActor::InitializeTrail(
 	}
 	if (TravelingBulletLight)
 	{
+		TravelingBulletLight->SetVisibility(!DestinationPickup);
 		TravelingBulletLight->SetLightColor(BulletLightColor);
 		TravelingBulletLight->SetIntensity(FMath::Max(BulletLightIntensity, 0.0f));
 	}
@@ -97,6 +99,10 @@ void AOBBulletTrailActor::Tick(float DeltaSeconds)
 	Elapsed += DeltaSeconds;
 	const float Alpha = FMath::Clamp(Elapsed / Duration, 0.0f, 1.0f);
 	SetActorLocation(FMath::Lerp(StartLocation, EndLocation, Alpha));
+	if (DestinationPickup)
+	{
+		DestinationPickup->UpdateIncomingFlightLocation(GetActorLocation());
+	}
 
 	if (Alpha >= 1.0f)
 	{

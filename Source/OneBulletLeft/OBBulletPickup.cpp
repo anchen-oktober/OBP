@@ -8,6 +8,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
 #include "OBBulletTrailActor.h"
 #include "OBCharacter.h"
 #include "OBGameState.h"
@@ -24,7 +25,7 @@ AOBBulletPickup::AOBBulletPickup()
 	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
 	Mesh->SetupAttachment(RootComponent);
 	Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	Mesh->SetRelativeScale3D(FVector(0.35f));
+	Mesh->SetRelativeScale3D(FVector(MainMeshScale));
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	if (SphereMesh.Succeeded())
@@ -126,7 +127,7 @@ void AOBBulletPickup::PlayTrailEffectToPickup(UObject* WorldContextObject, const
 	}
 }
 
-void AOBBulletPickup::BeginIncomingFlight()
+void AOBBulletPickup::BeginIncomingFlight(const FVector& FlightStart)
 {
 	if (bCollected)
 	{
@@ -134,11 +135,31 @@ void AOBBulletPickup::BeginIncomingFlight()
 	}
 
 	bAwaitingIncomingFlight = true;
-	SetActorHiddenInGame(true);
+	if (RootComponent && RootComponent->GetAttachParent())
+	{
+		FlightDestinationParent = RootComponent->GetAttachParent();
+		FlightDestinationSocket = RootComponent->GetAttachSocketName();
+		FlightDestinationRelativeTransform = RootComponent->GetRelativeTransform();
+		DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	}
+	SetActorLocation(FlightStart, false);
+	SetActorHiddenInGame(false);
+	if (Mesh)
+	{
+		Mesh->SetRelativeScale3D(FVector(MainMeshScale));
+	}
 	if (PickupSphere)
 	{
 		PickupSphere->SetGenerateOverlapEvents(false);
 		PickupSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+}
+
+void AOBBulletPickup::UpdateIncomingFlightLocation(const FVector& FlightLocation)
+{
+	if (bAwaitingIncomingFlight && !bCollected)
+	{
+		SetActorLocation(FlightLocation, false);
 	}
 }
 
@@ -151,6 +172,12 @@ void AOBBulletPickup::CompleteIncomingFlight()
 
 	bAwaitingIncomingFlight = false;
 	SetActorHiddenInGame(false);
+	if (FlightDestinationParent.IsValid())
+	{
+		AttachToComponent(FlightDestinationParent.Get(), FAttachmentTransformRules::KeepRelativeTransform, FlightDestinationSocket);
+		RootComponent->SetRelativeTransform(FlightDestinationRelativeTransform);
+		FlightDestinationParent.Reset();
+	}
 	if (PickupSphere)
 	{
 		PickupSphere->SetCollisionProfileName(TEXT("Trigger"));
@@ -170,7 +197,7 @@ void AOBBulletPickup::UpdatePickupPresentation_Implementation(float DeltaSeconds
 	const float Bob = FMath::Sin(RunningTime * BobSpeed) * BobHeight;
 	SetMeshPresentationOffset(FVector(0.0f, 0.0f, MeshBaseHeight + Bob));
 	const float Pulse = 1.0f + FMath::Sin(RunningTime * BobSpeed) * PulseScale;
-	Mesh->SetRelativeScale3D(FVector(0.35f * Pulse));
+	Mesh->SetRelativeScale3D(FVector(MainMeshScale * Pulse));
 	if (BeaconLight)
 	{
 		BeaconLight->SetIntensity(BeaconIntensity + FMath::Max(0.0f, FMath::Sin(RunningTime * BobSpeed)) * BeaconPulseAmount);
@@ -199,6 +226,10 @@ void AOBBulletPickup::Collect(AOBCharacter* Player)
 	if (PickupSound)
 	{
 		UGameplayStatics::PlaySoundAtLocation(this, PickupSound, GetActorLocation());
+	}
+	if (PickupEffect)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, PickupEffect, GetActorLocation(), GetActorRotation());
 	}
 	Destroy();
 }
