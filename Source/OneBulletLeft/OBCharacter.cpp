@@ -646,7 +646,6 @@ void AOBCharacter::HideFirstPersonHead()
 	}
 
 	GetMesh()->HideBoneByName(TEXT("head"), EPhysBodyOp::PBO_None);
-	GetMesh()->HideBoneByName(TEXT("neck_01"), EPhysBodyOp::PBO_None);
 }
 
 void AOBCharacter::PlayActionAnimation(UAnimationAsset* Animation, float Duration)
@@ -773,7 +772,6 @@ void AOBCharacter::ApplyViewMode()
 	if (bThirdPersonView)
 	{
 		GetMesh()->UnHideBoneByName(TEXT("head"));
-		GetMesh()->UnHideBoneByName(TEXT("neck_01"));
 	}
 	else
 	{
