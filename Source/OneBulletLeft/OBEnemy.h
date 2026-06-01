@@ -6,7 +6,6 @@
 
 class AOBBulletPickup;
 class UAnimationAsset;
-class UNiagaraSystem;
 
 UENUM(BlueprintType)
 enum class EOBEnemyType : uint8
@@ -35,6 +34,36 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings")
 	float HeavySpeed = 260.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float PlayerHasBulletSpeedMultiplier = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0", ClampMax="1.0", DisplayName="Player Has Bullet Attack Speed Multiplier"))
+	float PlayerHasBulletAttackSpeedMultiplier = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0", DisplayName="Player Has Bullet Attack Radius"))
+	float PlayerHasBulletAttackRadius = 320.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0"))
+	float PatrolRadius = 2600.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure")
+	FVector PatrolCenter = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0"))
+	float PatrolPointJitter = 420.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0"))
+	float PatrolMinTargetDistance = 900.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="1.0"))
+	float PatrolAcceptanceRadius = 120.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0"))
+	float PatrolObstacleProbeDistance = 260.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0"))
+	float PatrolObstacleProbeRadius = 70.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings")
 	float TouchKillRadius = 85.0f;
 
@@ -48,10 +77,13 @@ public:
 	float SurroundFrontArcDegrees = 150.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(EditCondition="bUseSurroundMovement", ClampMin="0.0"))
-	float FastSurroundRadius = 72.0f;
+	float FastSurroundRadius = 320.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(EditCondition="bUseSurroundMovement", ClampMin="0.0"))
-	float HeavySurroundRadius = 104.0f;
+	float HeavySurroundRadius = 420.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(EditCondition="bUseSurroundMovement", ClampMin="0.0"))
+	float MinAggressiveSurroundRadius = 260.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings")
 	bool bCanTouchKillFromBehind = false;
@@ -75,13 +107,25 @@ public:
 	TObjectPtr<UAnimationAsset> IdleAnimation;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	TObjectPtr<UAnimationAsset> WalkAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
 	TObjectPtr<UAnimationAsset> RunAnimation;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
 	bool bUseSimpleLocomotionAnimations = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(EditCondition="bUseSimpleLocomotionAnimations", ClampMin="0.0"))
-	float RunAnimationMinSpeed = 10.0f;
+	float WalkAnimationMinSpeed = 10.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(EditCondition="bUseSimpleLocomotionAnimations", ClampMin="0.0"))
+	float RunAnimationMinSpeed = 220.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(EditCondition="bUseSimpleLocomotionAnimations", ClampMin="0.0"))
+	float WalkAnimationPlayRate = 0.55f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(EditCondition="bUseSimpleLocomotionAnimations", ClampMin="0.0"))
+	float RunAnimationPlayRate = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Bullet Attachment")
 	FName BulletAttachBone = TEXT("spine_03");
@@ -92,11 +136,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Movement")
 	bool bUseDirectMovementFallback = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|VFX")
-	TObjectPtr<UNiagaraSystem> SpawnEffect;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|VFX")
-	TObjectPtr<UNiagaraSystem> DisappearEffect;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Movement")
+	bool bUseDirectLostBulletChase = true;
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void Configure(EOBEnemyType NewType);
@@ -125,10 +166,10 @@ public:
 	void OnEnemyKicked(const FVector& Direction, EOBEnemyType Type);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
-	void OnEnemySpawned(EOBEnemyType Type);
+	void OnEnemySpawned(EOBEnemyType Type, const FVector& Location);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
-	void OnEnemyDisappearing(EOBEnemyType Type);
+	void OnEnemyDisappearing(EOBEnemyType Type, const FVector& Location);
 
 protected:
 	UPROPERTY()
@@ -142,7 +183,14 @@ protected:
 	bool bDisappearing = false;
 	bool bUsingDirectMovementFallback = false;
 	bool bStoppedForPlayerDeath = false;
+	bool bMovingToPatrolTarget = false;
+	bool bHasPatrolTarget = false;
+	bool bWasHoldingBullet = true;
+	FVector PatrolOrigin = FVector::ZeroVector;
+	FVector CurrentPatrolTarget = FVector::ZeroVector;
 	FVector CurrentApproachTarget = FVector::ZeroVector;
+	FVector LastPatrolLocation = FVector::ZeroVector;
+	float PatrolStuckTime = 0.0f;
 	UAnimationAsset* ActiveLocomotionAnimation = nullptr;
 
 	FTimerHandle StunTimerHandle;
@@ -151,6 +199,21 @@ protected:
 	void ResumeAfterStun();
 	void RequestMove();
 	void StopPursuitForPlayerDeath();
+	void NormalizePressureSettings();
+	void ApplyBulletPressureSpeed();
+	bool IsPlayerHoldingBullet() const;
+	bool IsPlayerInsideBulletAttackRadius() const;
+	bool ShouldPatrolWhilePlayerHasBullet() const;
+	FVector GetOrChoosePatrolTarget();
+	FVector ChooseWholeArenaPatrolTarget() const;
+	bool ProjectPointToNavigation(FVector& InOutLocation) const;
+	bool TryGetPatrolSteeringTarget(FVector& OutTarget) const;
+	FVector CalculatePatrolMovementDirection(const FVector& DesiredDirection) const;
+	bool MoveToCurrentTarget(float AcceptanceRadius, bool bAllowDirectFallback, bool bAllowPartialPath);
+	void UpdatePatrolMovement(float DeltaSeconds);
+	void ChooseNewPatrolTarget();
+	void MoveAggressivelyToPlayer();
+	void ApplyDirectLostBulletChase();
 	void UpdateSimpleLocomotionAnimation();
 	FVector CalculateApproachTarget() const;
 	void TryTouchKill();
