@@ -1,223 +1,298 @@
 # One Bullet Left
 
-Прототип шутера на Unreal Engine 5.7 с главным циклом:
+Прототип arena shooter на Unreal Engine 5.7, построенный вокруг одного рискованного решения:
 
-`выстрел -> пуля потеряна -> давление врагов -> добежать до пули -> снова выстрел`
+> Выстрелить легко. Вернуть единственную пулю - опасно.
 
-У игрока всегда только одна пуля. После выстрела она физически появляется в мире как pickup, и пока игрок не подберет ее через overlap, стрелять снова нельзя.
+У игрока есть только одна пуля. После выстрела она физически летит в мир и остаётся там, куда попала: на теле убитого врага или в точке промаха. Пока игрок не подберёт её обратно, стрелять нельзя и оружие скрыто.
+
+Игровой ритм:
+
+`shot -> lost control -> pressure -> search -> risk -> pickup -> relief`
 
 ## Управление
 
-- `WASD` - движение
-- `Mouse` - обзор
-- `Space` - прыжок
-- `Left Mouse Button` - выстрел
-- `Right Mouse Button` или `F` - kick / push
-- `Left Shift` - уклонение
-- `R` - мягкий рестарт после Game Over без перезагрузки уровня
+| Действие | Клавиша |
+| --- | --- |
+| Движение | `WASD` |
+| Обзор | `Mouse` |
+| Прыжок | `Space` |
+| Выстрел | `Left Mouse Button` |
+| Пинок / push | `Right Mouse Button` или `F` |
+| Уклонение в свободную сторону | `Left Shift` / `Right Shift` |
+| Переключить first / third person | `1` |
+| Immortal Mode | `2` |
+| Перезапуск после Game Over | `R` |
 
-## Где что лежит
+## Gameplay
 
-Основные Blueprint-ассеты находятся в `/Game/OneBullet/Blueprints`:
+1. Раунд начинается с заряженной пулей: `Bullet: Ready`; оружие находится в руке.
+2. Выстрел сразу переводит состояние в `Bullet: Lost` и скрывает оружие.
+3. При попадании враг умирает с одного выстрела, а пуля прилетает на его тело.
+4. Тело остаётся на арене, пока пуля не подобрана.
+5. При промахе пуля остаётся в точке окончания выстрела.
+6. Без пули игрок выживает за счёт движения, уклонения и пинка.
+7. Подбор возвращает пулю, оружие и возможность снова выстрелить.
 
-- `BP_OBGameMode` - правила прототипа, спавн врагов, классы врагов, настройки спавна и bullet pickup.
-- `BP_OBCharacter` - игрок, стрельба, пинок, уклонение, смерть, звуки и BP-события для эффектов.
-- `BP_OBEnemy_Fast` - быстрый враг.
-- `BP_OBEnemy_Heavy` - тяжелый враг.
-- `BP_OBBulletPickup` - пуля в мире после выстрела.
-- `BP_OBHUD` - HUD actor, который создает `WBP_OBHUD`.
-- `WBP_OBHUD` - весь визуальный UI.
-- `BP_OBGameState` - состояние пули, счетчик убийств, Game Over.
+Pickup имеет мягкое притягивание на близкой дистанции, звук, эффект и Blueprint-hook для UI pulse. Цель feedback - сделать момент возвращения пули коротким и очень понятным.
 
-Уровень: `/Game/FirstPerson/Lvl_FirstPerson`.
+## Оружие И Состояние Пули
 
-## Что сделано в C++
+Оружие настраивается в `BP_OBCharacter`, а состояние определяется основной механикой:
 
-C++ держит базовую игровую логику, чтобы прототип не разваливался от изменений в BP:
+| Состояние | Визуал | Анимации движения |
+| --- | --- | --- |
+| `Bullet: Ready` | оружие видно в руке | armed idle/run (`Pistol ...` поля) |
+| `Bullet: Lost` | оружие скрыто | standard idle/run |
 
-- состояние одной пули `Ready / Lost`;
-- line trace выстрела;
-- убийство врага с одного попадания;
-- создание bullet pickup через единое место в `AOBGameMode::SpawnBulletPickup`;
-- подбор пули через overlap;
-- движение врагов к игроку;
-- touch-kill врагов;
-- запрет убийства с явной спины игрока;
-- короткие scripted waves для pacing прототипа;
-- kick / push;
-- уклонение в свободную сторону;
-- dodge cooldown state для HUD/BP;
-- Game Over и restart;
-- причина смерти, время выживания и best kills;
-- мягкий restart run по `R`: удаляет врагов и pickup, возвращает игрока на PlayerStart, сбрасывает волны и GameState без `OpenLevel`;
-- обновление базового HUD-состояния.
+Выстрел целится из камеры, поэтому попадание соответствует прицелу. Визуальный вылет пули и muzzle flash могут стартовать из сокета оружия `MuzzleFlash`, чтобы выстрел читался корректно и в third person.
 
-При этом почти все числа и реакции вынесены в Blueprint-friendly поля и события.
+Для текущего дробовика:
 
-## Что настраивается в BP
+1. В `Weapon Model` назначить `Shotgun_A`.
+2. На скелете персонажа создать удобный socket на кости кисти, например `ShotgunSocket`, и указать его в `Weapon Attach Socket Name`.
+3. Положение и поворот оружия довести в `Weapon Ready Relative Transform`.
+4. В `Weapon Shoot Animation` назначить анимацию оружия, подходящую дробовику, например `Fire_Shotgun_W`.
+5. В `Shoot Animation` назначить анимацию стрельбы самого персонажа, ретаргетнутую под его текущий скелет.
+6. Включить `Use Weapon Muzzle For Bullet Flight`, если полёт должен начинаться от ствола.
 
-### `BP_OBGameMode`
+`Weapon Lost Relative Transform` сохранён в настройках, но при текущем варианте с исчезающим оружием визуально не используется в состоянии `Bullet: Lost`.
 
-Отвечает за общий flow прототипа.
+## Враги
 
-Важные настройки:
+### Fast Enemy
 
-- `Build Greybox Arena` - строить простую тестовую арену из кода.
-- `Spawn Interval` - частота спавна врагов.
-- `Max Live Enemies` - максимум живых врагов.
-- `Use Scripted Waves` - использовать короткую структуру волн вместо бесконечного равномерного спавна.
-- `Wave Definitions` - список волн. В каждой волне задаются Fast count, Heavy count, задержка перед волной, интервал спавна и лимит живых врагов.
-- `Fast Enemy Class` / `Heavy Enemy Class` - какие BP использовать для врагов.
-- `Bullet Pickup Class` - какой BP использовать для пули.
-- `Spawn Enemies Only In Front Of Player` - не спавнить врагов за спиной.
-- `Front Spawn Min Dot` - насколько строго точка должна быть перед игроком. Сейчас дефолт `0.35`.
-- `Allow Any Spawn If No Front Point` - разрешить fallback в любую точку, если впереди нет доступной.
-- `Bullet Pickup Drop Height` - насколько поднять pickup над точкой попадания. Сейчас дефолт `5`, чтобы пуля была низко.
+- Быстро сокращает дистанцию.
+- Убивает при контакте.
+- Сильно отлетает от пинка.
+- Создаёт панику и заставляет постоянно двигаться.
 
-### `BP_OBCharacter`
+### Heavy Enemy
 
-Отвечает за игрока.
+- Движется медленнее.
+- Убивает при контакте.
+- Почти не отлетает от пинка, но получает короткий stun.
+- Перекрывает путь к потерянной пуле и контролирует пространство.
 
-Настройки:
-
-- `Shoot Range` - дальность выстрела.
-- `Kick Cooldown`, `Kick Range`, `Kick Radius` - параметры пинка.
-- `Dodge Distance`, `Dodge Duration`, `Dodge Cooldown` - параметры уклонения.
-- `Dodge Enemy Clearance` - насколько далеко от врагов должна быть безопасная точка уклонения.
-- `Prefer Movement Direction Dodge` - сначала пробовать уклонение по текущему движению.
-- `Hide Head For First Person` - скрывать голову у видимой модели игрока.
-- `Shoot Sound`, `Dry Fire Sound`, `Kick Sound`, `Death Sound`, `Dodge Sound` - звуки.
-
-BP-события для эффектов:
-
-- `OnPlayerShoot(TraceStart, TraceEnd, ImpactLocation, bHitSomething, bHitEnemy)`
-- `OnPlayerDryFire()`
-- `OnPlayerKick(KickStart, KickEnd, HitEnemyCount)`
-- `OnPlayerDodge(DodgeDirection)`
-- `OnPlayerDodgeFailed(FailReason)`
-- `OnPlayerDeath()`
-
-Сюда удобно вешать звук, camera shake, Niagara, montage, hit feedback.
-
-### `BP_OBEnemy_Fast` и `BP_OBEnemy_Heavy`
-
-Оба наследуются от `AOBEnemy`.
-
-Общие настройки:
-
-- `Enemy Type` - Fast или Heavy.
-- `Fast Speed` / `Heavy Speed` - скорости.
-- `Touch Kill Radius` - ручной минимальный радиус убийства.
-- `Touch Kill Extra Margin` - запас к реальным scaled-капсулам игрока и врага.
-- `Can Touch Kill From Behind` - разрешить убийство за спиной игрока. Сейчас лучше держать `false`.
-- `Touch Kill Front Min Dot` - насколько враг должен быть в зоне видимости игрока, чтобы убить.
-- `Death Sound` - звук смерти.
-
-Поведение:
-
-- Fast быстро идет к игроку и сильно отлетает от kick.
-- Heavy медленно идет к игроку, почти не отлетает, но получает stun примерно на 1 секунду.
-
-BP-события:
-
-- `OnEnemyDeath(DropLocation)` - смерть врага. Сюда удобно ставить звук, Niagara, dissolve, анимацию.
-- `OnEnemyKicked(Direction, Type)` - реакция на kick.
-
-### `BP_OBBulletPickup`
-
-Отвечает за пулю, которую надо подобрать.
-
-Настройки:
-
-- `Pickup Sound` - звук подбора.
-- `Use Native Presentation Animation` - использовать встроенное вращение/покачивание.
-- `Mesh Base Height` - высота визуального меша над root. Сейчас дефолт `12`.
-- `Bob Height` - амплитуда покачивания. Сейчас дефолт `4`.
-- `Bob Speed` - скорость покачивания.
-- `Spin Speed` - скорость вращения.
-
-Если хочется полностью контролировать визуал в BP, можно выключить `Use Native Presentation Animation` и переопределить `Update Pickup Presentation`.
-
-### `WBP_OBHUD`
-
-Весь UI должен настраиваться здесь: шрифты, контейнеры, отступы, цвета, анимации, порядок слоев.
-
-C++ автоматически обновляет эти виджеты, если они есть и названы так:
-
-- `BulletStatusText`
-- `KillCountText`
-- `GameOverText`
-- `RestartText`
-- `DeathFade`
-- `DeathStatsText`
-- `DodgeStatusText`
-- `DodgeCooldownBar`
-
-Что делает код:
-
-- обновляет текст `Bullet: Ready / Lost`;
-- обновляет `Kills: N`;
-- скрывает `GameOverText`, `RestartText`, `DeathFade`, пока игрок жив;
-- показывает их при смерти.
-- обновляет `DeathStatsText`: причина смерти, kills, time survived, best kills.
-- обновляет `DodgeStatusText` и `DodgeCooldownBar`, если они есть в WBP.
-
-Дополнительные BP-события:
-
-- `OnBulletStateChanged(NewBulletState)`
-- `OnKillCountChanged(NewKillCount)`
-- `OnGameOverChanged(bNewGameOver)`
-- `OnDodgeCooldownChanged(bNewDodgeReady, NewCooldownNormalized)`
-- `OnHudStateRefreshed(NewBulletState, NewKillCount, bNewGameOver)`
-
-Их можно использовать для анимаций, звуков UI и дополнительных контейнеров.
-
-## Gameplay Loop
-
-1. Игрок начинает с пулей.
-2. Игрок стреляет.
-3. Состояние пули становится `Lost`.
-4. Если попал во врага, враг умирает и появляется pickup рядом с ним.
-5. Если промахнулся, pickup появляется в точке попадания или в конце trace.
-6. Пока pickup не подобран, стрелять нельзя.
-7. Игрок должен физически добежать до пули.
-8. После overlap с pickup состояние возвращается в `Ready`.
+Враги стараются подходить к игроку с разных направлений. По умолчанию спавн за спиной и убийство из явной слепой зоны отключены, потому что основной режим игры - first person.
 
 ## Волны
 
-По умолчанию включены три короткие волны:
+В `BP_OBGameMode` включена короткая pacing-структура:
 
-- Wave 1: 2 Fast.
-- Wave 2: 1 Fast + 1 Heavy.
-- Wave 3: 3 Fast + 2 Heavy.
+| Волна | Состав |
+| --- | --- |
+| 1 | 2 Fast |
+| 2 | 1 Fast + 1 Heavy |
+| 3 | 3 Fast + 2 Heavy |
 
-Это не полноценная production wave system, а простая pacing-структура, чтобы прототип за пару минут показывал нарастающее давление.
+Все параметры меняются в `Wave Definitions`: количество врагов, задержка, интервал спавна и лимит живых врагов.
 
-## Враги и видимость
+## Основные Blueprint Assets
 
-Враги спавнятся только в зоне перед взглядом игрока, если включен `Spawn Enemies Only In Front Of Player`.
+Игровые Blueprint находятся в `/Game/OneBullet/Blueprints`.
 
-Дополнительно touch-kill не срабатывает, если враг явно оказался за спиной игрока. Это сделано специально для first person режима, чтобы игрок не умирал от угрозы, которую не мог видеть.
+| Asset | Ответственность |
+| --- | --- |
+| `BP_OBGameMode` | flow раунда, волны, классы врагов и pickup, правила спавна |
+| `BP_OBCharacter` | внешний вид игрока, оружие, анимации, звуки и feedback действий |
+| `BP_OBEnemy_Fast` | вид и feedback быстрого врага |
+| `BP_OBEnemy_Heavy` | вид и feedback тяжёлого врага |
+| `BP_OBBulletPickup` | вид пули, pickup feedback, Niagara trail и читаемость |
+| `BP_OBHUD` | создаёт виджет HUD |
+| `WBP_OBHUD` | визуальная сборка UI и UI-анимации |
+| `BP_OBGameState` | состояние пули, kills, Game Over и статистика |
 
-## Генерация и проверка BP
+Уровень прототипа: `/Game/FirstPerson/Lvl_FirstPerson`.
 
-Скрипт:
+## Что В C++
 
-`Scripts/CreateOneBulletBlueprints.py`
+C++ поддерживает стабильную игровую механику:
 
-Создает и обновляет основные BP, назначает классы в `BP_OBGameMode`, выставляет GameMode Override на уровне и сохраняет ассеты.
+- состояние одной пули `Ready / Lost`;
+- выстрел, hit detection и убийство с одного попадания;
+- видимость оружия в зависимости от наличия пули;
+- вылет presentation-пули и muzzle flash из оружия при включённой настройке;
+- создание pickup и физический возврат пули в мир;
+- Niagara trail летящей пули;
+- overlap, magnet pickup и восстановление выстрела;
+- AI-преследование, окружение и touch-kill;
+- различие Fast / Heavy, pushback и stun;
+- уклонение в свободную от препятствий и врагов сторону;
+- first / third person режим и Immortal Mode;
+- короткие волны, рестарт раунда и игровая статистика;
+- передача gameplay state и событий в Blueprint.
 
-Проверка:
+Оформление, VFX, звуки, модели и анимации намеренно оставлены для Blueprint.
 
-`Scripts/VerifyOneBulletBlueprints.py`
+## Настройка В Blueprint
 
-Пишет результат в:
+### `BP_OBGameMode`
 
-`Saved/OneBulletBPVerify.txt`
+Ключевые поля в `One Bullet Settings`:
 
-## Полезные заметки
+| Поле | Назначение |
+| --- | --- |
+| `Use Scripted Waves` | включает короткие настроенные волны |
+| `Wave Definitions` | состав и timing каждой волны |
+| `Fast Enemy Class` / `Heavy Enemy Class` | используемые классы врагов |
+| `Bullet Pickup Class` | класс физической пули |
+| `Spawn Enemies Only In Front Of Player` | запрещает спавн за спиной |
+| `Front Spawn Min Dot` | ограничивает допустимый передний сектор |
+| `Allow Any Spawn If No Front Point` | fallback, если впереди нет точки |
+| `Bullet Pickup Drop Height` | высота пули относительно точки попадания |
+| `Force Windowed Mode` | запуск прототипа в окне |
 
-- `BP_OBGameMode` должен быть настоящим Blueprint, не redirector. Если игра внезапно запускается как `GameModeBase`, почти наверняка сломалась ссылка на GameMode.
-- Если меняется C++ с `UPROPERTY`, лучше закрыть Unreal Editor или выключить Live Coding перед полной сборкой.
-- Debug trace выстрела сейчас отключен и не рисуется.
-- Визуал placeholder/greybox, логика специально оставлена простой и удобной для настройки в BP.
+### `BP_OBCharacter`
+
+#### Анимации
+
+| Поле | Когда используется |
+| --- | --- |
+| `Standard Idle Animation (Bullet Lost)` | игрок стоит без пули |
+| `Standard Run Animation (Bullet Lost)` | игрок движется без пули |
+| `Pistol Idle Animation (Bullet Ready)` | armed idle с оружием; имя поля историческое и подходит для дробовика |
+| `Pistol Run Animation (Bullet Ready)` | armed run с оружием; сюда назначается текущий `Pistol_run` или другой armed run |
+| `Shoot Animation` | анимация стрельбы персонажа |
+| `Death Animation` | смерть персонажа |
+| `Kick Animation` | пинок персонажа |
+| `Use Simple Locomotion Animations` | включает переключение idle/run в зависимости от скорости и пули |
+
+`Shoot Animation`, idle и run должны быть совместимы со скелетом текущего персонажа. Если animation asset создан для другого skeleton, Unreal пропустит проигрывание или выдаст ошибку позы; такую анимацию нужно ретаргетнуть.
+
+#### Оружие И Выстрел
+
+| Поле | Назначение |
+| --- | --- |
+| `Weapon Model` | skeletal mesh оружия, сейчас можно использовать `Shotgun_A` |
+| `Weapon Attach Socket Name` | socket на руке персонажа, например `ShotgunSocket` |
+| `Weapon Ready Relative Transform` | положение оружия в руке при `Bullet: Ready` |
+| `Weapon Lost Relative Transform` | резервное поле позы без пули; оружие сейчас скрывается |
+| `Weapon Pose Blend Speed` | скорость перехода позы, если Lost-вид снова понадобится |
+| `Shoot Effect` | muzzle flash / VFX выстрела |
+| `Shoot Effect Socket Name` | socket эффекта на оружии, обычно `MuzzleFlash` |
+| `Shoot Sound` | звук выстрела |
+| `Weapon Shoot Animation` | отдельная анимация самого оружия, для дробовика - `Fire_Shotgun_W` |
+| `Use Weapon Muzzle For Bullet Flight` | начинает видимый полёт пули от ствола |
+
+Также здесь настраиваются `Dry Fire Sound`, `Kick Sound`, `Dodge Sound`, `Death Sound`, `Hit Confirm Sound`, recoil, camera shake, hit-stop, дистанции/cooldown пинка и уклонения, third-person camera и стартовый Immortal Mode.
+
+Blueprint-события игрока:
+
+| Событие | Для чего использовать |
+| --- | --- |
+| `OnPlayerShoot` | дополнительный shot VFX / feedback |
+| `OnPlayerHitConfirmed` | impact VFX и hit feedback |
+| `OnPlayerBulletRecovered` | звук облегчения и pulse подбора |
+| `OnPlayerWeaponStateChanged` | реакция на поднятое/скрытое оружие |
+| `OnPlayerDryFire` | feedback попытки стрелять без пули |
+| `OnPlayerKick` | дополнительная анимация и VFX пинка |
+| `OnPlayerDodge` / `OnPlayerDodgeFailed` | whoosh, dash trail, feedback cooldown |
+| `OnPlayerDeath` | death VFX и presentation |
+| `OnPlayerViewModeChanged` | UI/камера при смене вида |
+| `OnPlayerImmortalModeChanged` | feedback debug-режима |
+
+### `BP_OBEnemy_Fast` / `BP_OBEnemy_Heavy`
+
+Настраиваются `Enemy Type`, скорость, touch-kill, pressure/окружение, `Idle Animation`, `Run Animation`, `Death Animation`, `Death Sound`, а также крепление пули к телу: `Bullet Attach Bone` и `Bullet Attach Offset`.
+
+| Событие | Данные | Применение |
+| --- | --- | --- |
+| `OnEnemyDeath` | `Drop Location` | death effect, звук, дополнительная реакция |
+| `OnEnemyKicked` | `Direction`, `Type` | hit reaction / эффект пинка |
+| `OnEnemySpawned` | `Type`, `Location` | spawn VFX |
+| `OnEnemyDisappearing` | `Type`, `Location` | dissolve / disappear VFX |
+
+Spawn/disappear VFX собираются нодами в каждом BP врага, поэтому их легко заменить без изменения C++.
+
+### `BP_OBBulletPickup`
+
+| Поле | Назначение |
+| --- | --- |
+| `Pickup Sound` | звук успешного возврата пули |
+| `Pickup Effect` | Niagara при подборе |
+| `Trail Niagara System` | след летящей пули |
+| `Trail Flight Duration` / `Trail Travel Speed` | читаемая скорость полёта |
+| `Main Mesh Scale` | размер основной пули в мире |
+| `Traveling Bullet Scale` | размер представления пули в полёте / fallback |
+| `Pickup Radius` / `Magnet Radius` / `Magnet Speed` | forgiving pickup |
+| `Use Native Presentation Animation` | встроенные bob/spin/pulse |
+
+Важно: при включённом `Use Native Presentation Animation` масштаб меша пули обновляется из `Main Mesh Scale` во время игры. Поэтому увеличить новую маленькую модель нужно именно этим полем в BP, а не `Transform / Scale` компонента. Удобная стартовая проба для маленького mesh: `Main Mesh Scale = 1.5`, `Traveling Bullet Scale = 0.3`, затем подогнать глазами.
+
+### `WBP_OBHUD`
+
+`WBP_OBHUD` отвечает за шрифты, контейнеры, цвета, расположение, видимость и UI-анимации. C++ передаёт данные и вызывает события.
+
+| Getter | Значение |
+| --- | --- |
+| `Is Bullet Ready` | можно ли стрелять |
+| `Get Kill Count` | количество убийств |
+| `Is Game Over` | завершён ли раунд |
+| `Get Last Run Time` | время законченной попытки |
+| `Get Best Kill Count` | лучший результат |
+| `Get Death Reason` | причина смерти |
+| `Is Dodge Ready` | доступность уклонения |
+| `Get Dodge Cooldown Normalized` | прогресс cooldown |
+| `Is Immortal Mode` | активен ли бессмертный режим |
+
+| Событие HUD | Рекомендуемая реакция |
+| --- | --- |
+| `OnHudInitialized` | собрать стартовое отображение |
+| `OnBulletStateChanged` | изменить `Bullet: Ready / Lost` и warning |
+| `OnBulletRecovered` | проиграть UI-анимацию `BulletReadyPulse` |
+| `OnKillCountChanged` | обновить kills |
+| `OnGameOverChanged` | показать Game Over, fade и статистику |
+| `OnDodgeCooldownChanged` | обновить индикатор уклонения |
+| `OnImmortalModeChanged` | показать или скрыть `ImmortalModeTxt` |
+
+Пример статистики для `Format Text`:
+
+```text
+{Reason}
+Killed: {Kills}
+Time survived: {Time}s
+Best kills: {Best}
+```
+
+## Проверка Перед Демонстрацией
+
+1. В `BP_OBCharacter` проверить `Shotgun_A`, socket руки, `Fire_Shotgun_W`, player `Shoot Animation` и armed idle/run.
+2. Сделать один выстрел: дробовик должен исчезнуть в `Bullet: Lost`, а пуля вылететь от ствола.
+3. Подобрать пулю: дробовик должен вернуться, HUD - переключиться в `Bullet: Ready`.
+4. В `BP_OBBulletPickup` подобрать читаемый `Main Mesh Scale`, чтобы пуля не терялась на арене.
+5. Проверить смерть, `R`, `Shift`, `1` и `2` в Play mode.
+
+## Сборка
+
+Проект собирается под `Windows / Development`.
+
+При packaging на этой машине XGE пытался одновременно компилировать много файлов и падал из-за виртуальной памяти:
+
+```text
+C3859: Failed to create virtual memory for PCH
+C1076: compiler limit: internal heap limit reached
+```
+
+Для стабильной сборки в пользовательском UnrealBuildTool config отключён XGE и установлен один compile action:
+
+`%APPDATA%/Unreal Engine/UnrealBuildTool/BuildConfiguration.xml`
+
+```xml
+<Configuration xmlns="https://www.unrealengine.com/BuildConfiguration">
+    <BuildConfiguration>
+        <bAllowXGE>false</bAllowXGE>
+        <MaxParallelActions>1</MaxParallelActions>
+    </BuildConfiguration>
+</Configuration>
+```
+
+После изменения C++ при открытом Unreal Editor нужно применить Live Coding (`Ctrl+Alt+F11`) либо закрыть редактор и собрать target заново. Сборка идёт медленнее, но избегает прежнего падения по памяти.
+
+## Заметки
+
+- После добавления `UPROPERTY` поля появятся в Blueprint Details только после компиляции модуля и перезапуска/обновления BP.
+- Если персонаж вытягивает шею или ломается поза, причина обычно в несовместимой анимации: проверьте skeleton и сделайте retarget.
+- Player `Shoot Animation` и `Weapon Shoot Animation` - разные assets: первая двигает персонажа, вторая механизмы оружия.
+- Для Niagara trail важны читаемые lifetime и скорость полёта; слишком быстрый эффект визуально превращается в вспышку.
+- Это компактный playable prototype: логика сосредоточена на цикле `потерять пулю -> рискнуть -> вернуть контроль`.

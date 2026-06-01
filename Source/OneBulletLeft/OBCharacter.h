@@ -9,8 +9,11 @@ class UCameraComponent;
 class UCameraShakeBase;
 class UAnimationAsset;
 class UAnimInstance;
+class UParticleSystem;
+class USceneComponent;
 class USpringArmComponent;
 class USoundBase;
+class USkeletalMesh;
 class AOBBulletPickup;
 
 UCLASS(PrioritizeCategories = "OneBulletSettings")
@@ -21,6 +24,7 @@ class ONEBULLETLEFT_API AOBCharacter : public ACharacter
 public:
 	AOBCharacter();
 
+	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
@@ -37,8 +41,14 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
 	TObjectPtr<USkeletalMeshComponent> FullBodyShadowMesh;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Weapon")
+	TObjectPtr<USkeletalMeshComponent> WeaponMesh;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Visual")
 	bool bHideHeadForFirstPerson = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Visual")
+	bool bHideBodyForFirstPersonCameraWeapon = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|View")
 	bool bStartInThirdPerson = false;
@@ -98,13 +108,25 @@ public:
 	float KickAnimationDuration = 0.55f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	TObjectPtr<UAnimationAsset> ShootAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	float ShootAnimationDuration = 0.32f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
 	TObjectPtr<UAnimationAsset> DeathAnimation;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(DisplayName="Standard Idle Animation (Bullet Lost)"))
 	TObjectPtr<UAnimationAsset> IdleAnimation;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(DisplayName="Pistol Idle Animation (Bullet Ready)"))
+	TObjectPtr<UAnimationAsset> PistolIdleAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(DisplayName="Standard Run Animation (Bullet Lost)"))
 	TObjectPtr<UAnimationAsset> RunAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(DisplayName="Pistol Run Animation (Bullet Ready)"))
+	TObjectPtr<UAnimationAsset> PistolRunAnimation;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
 	bool bUseSimpleLocomotionAnimations = false;
@@ -133,8 +155,41 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
 	FKey SecondaryDodgeKey = EKeys::RightShift;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon")
+	TObjectPtr<USkeletalMesh> WeaponModel;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon")
+	FName WeaponAttachSocketName = TEXT("hand_r");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon")
+	bool bAttachWeaponToCamera = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon")
+	FTransform WeaponReadyRelativeTransform = FTransform::Identity;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon", meta=(EditCondition="bAttachWeaponToCamera"))
+	FTransform CameraWeaponRelativeTransform = FTransform(FRotator(0.0f, -93.0f, 0.0f), FVector(44.0f, 18.0f, -18.0f), FVector(0.68f));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon")
+	FTransform WeaponLostRelativeTransform = FTransform(FRotator(-42.0f, 0.0f, 0.0f), FVector(0.0f, 0.0f, -14.0f), FVector::OneVector);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon", meta=(ClampMin="0.0"))
+	float WeaponPoseBlendSpeed = 14.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Shot")
+	TObjectPtr<UParticleSystem> ShootEffect;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Shot")
+	FName ShootEffectSocketName = TEXT("MuzzleFlash");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Shot")
 	TObjectPtr<USoundBase> ShootSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Shot")
+	TObjectPtr<UAnimationAsset> WeaponShootAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Shot")
+	bool bUseWeaponMuzzleForBulletFlight = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
 	TObjectPtr<USoundBase> DryFireSound;
@@ -171,6 +226,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|View")
 	void SetThirdPersonView(bool bUseThirdPerson);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Weapon")
+	void SetCameraWeaponRelativeTransform(const FTransform& NewTransform);
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Weapon")
+	FTransform GetCameraWeaponRelativeTransform() const { return CameraWeaponRelativeTransform; }
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Modes")
 	void ToggleImmortalMode();
@@ -214,6 +275,9 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
 	void OnPlayerImmortalModeChanged(bool bNowImmortal);
 
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
+	void OnPlayerWeaponStateChanged(bool bBulletReady);
+
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings")
 	bool IsDead() const { return bDead; }
 
@@ -239,6 +303,7 @@ protected:
 	bool bDodging = false;
 	bool bThirdPersonView = false;
 	bool bImmortalMode = false;
+	bool bWeaponBulletReady = true;
 
 	FVector ActiveDodgeDirection = FVector::ZeroVector;
 	float ActiveDodgeElapsed = 0.0f;
@@ -270,11 +335,21 @@ protected:
 	void ConfigurePlayerMesh();
 	void HideFirstPersonHead();
 	void ConfigureFullBodyShadowMesh();
+	void ConfigureWeapon();
+	void ApplyWeaponReadyTransform(bool bSnap);
+	void SetWeaponBulletReady(bool bReady, bool bSnap = false);
+	void UpdateWeaponPose(float DeltaSeconds);
+	USceneComponent* GetWeaponAttachParent() const;
+	const FTransform& GetWeaponReadyTargetTransform() const;
+	void PlayShootEffect();
+	void PlayWeaponShootAnimation();
+	FVector GetBulletVisualStartLocation(const FVector& TraceStart) const;
 	void PlayActionAnimation(UAnimationAsset* Animation, float Duration);
 	void PlayDeathAnimation();
 	void UpdateSimpleLocomotionAnimation();
 	void RestoreMovementAnimation();
 	void ApplyViewMode();
 	UCameraComponent* GetShootingCamera() const;
+	void GetCrosshairTrace(FVector& OutTraceStart, FVector& OutTraceEnd) const;
 	AOBBulletPickup* DropBulletAt(const FVector& Location);
 };

@@ -14,6 +14,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Particles/ParticleSystem.h"
 #include "OBEnemy.h"
 #include "OBGameMode.h"
 #include "OBGameState.h"
@@ -57,8 +58,44 @@ AOBCharacter::AOBCharacter()
 	FullBodyShadowMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("FullBodyShadowMesh"));
 	FullBodyShadowMesh->SetupAttachment(GetCapsuleComponent());
 
+	WeaponMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh"));
+	WeaponMesh->SetupAttachment(FirstPersonCamera);
+	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> DefaultWeapon(TEXT("/Game/MilitaryWeapDark/Weapons/Pistols_B.Pistols_B"));
+	if (DefaultWeapon.Succeeded())
+	{
+		WeaponModel = DefaultWeapon.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UParticleSystem> DefaultShootEffect(TEXT("/Game/MilitaryWeapDark/FX/P_Pistol_MuzzleFlash_01.P_Pistol_MuzzleFlash_01"));
+	if (DefaultShootEffect.Succeeded())
+	{
+		ShootEffect = DefaultShootEffect.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<USoundBase> DefaultShootSound(TEXT("/Game/MilitaryWeapDark/Sound/Pistol/PistolB_Fire_Cue.PistolB_Fire_Cue"));
+	if (DefaultShootSound.Succeeded())
+	{
+		ShootSound = DefaultShootSound.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> DefaultWeaponShootAnimation(TEXT("/Game/MilitaryWeapDark/Weapons/Anims/Fire_Pistol_W.Fire_Pistol_W"));
+	if (DefaultWeaponShootAnimation.Succeeded())
+	{
+		WeaponShootAnimation = DefaultWeaponShootAnimation.Object;
+	}
+
 	ConfigurePlayerMesh();
 	ConfigureFullBodyShadowMesh();
+	ConfigureWeapon();
+}
+
+void AOBCharacter::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	ConfigureWeapon();
+	ApplyWeaponReadyTransform(true);
 }
 
 void AOBCharacter::BeginPlay()
@@ -70,6 +107,7 @@ void AOBCharacter::BeginPlay()
 		DefaultPlayerAnimClass = GetMesh()->GetAnimClass();
 		ConfigureFullBodyShadowMesh();
 	}
+	ConfigureWeapon();
 
 	if (AOBGameState* OneBulletState = GetWorld()->GetGameState<AOBGameState>())
 	{
@@ -79,6 +117,7 @@ void AOBCharacter::BeginPlay()
 
 	bThirdPersonView = bStartInThirdPerson;
 	bImmortalMode = bStartImmortal;
+	SetWeaponBulletReady(true, true);
 	ApplyViewMode();
 }
 
@@ -88,6 +127,7 @@ void AOBCharacter::Tick(float DeltaSeconds)
 	UpdateDodge(DeltaSeconds);
 	UpdateRecoil(DeltaSeconds);
 	UpdateSimpleLocomotionAnimation();
+	UpdateWeaponPose(DeltaSeconds);
 }
 
 void AOBCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -166,11 +206,23 @@ void AOBCharacter::Shoot()
 		return;
 	}
 
+	FVector TraceStart = FVector::ZeroVector;
+	FVector TraceEnd = FVector::ZeroVector;
+	GetCrosshairTrace(TraceStart, TraceEnd);
+	const FVector BulletVisualStart = GetBulletVisualStartLocation(TraceStart);
+
 	OneBulletState->SetBulletReady(false);
+	PlayActionAnimation(ShootAnimation, ShootAnimationDuration);
+	PlayShootEffect();
+	PlayWeaponShootAnimation();
 	if (ShootSound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, ShootSound, GetActorLocation());
+		const FVector SoundLocation = WeaponMesh
+			? WeaponMesh->GetSocketLocation(ShootEffectSocketName)
+			: GetActorLocation();
+		UGameplayStatics::PlaySoundAtLocation(this, ShootSound, SoundLocation);
 	}
+	SetWeaponBulletReady(false);
 
 	AddControllerPitchInput(-RecoilPitchImpulse);
 	AddControllerYawInput(FMath::FRandRange(-RecoilYawRandomness, RecoilYawRandomness));
@@ -184,17 +236,13 @@ void AOBCharacter::Shoot()
 		}
 	}
 
-	const UCameraComponent* ShootingCamera = GetShootingCamera();
-	const FVector Start = ShootingCamera->GetComponentLocation();
-	const FVector End = Start + ShootingCamera->GetForwardVector() * ShootRange;
-
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(OneBulletShoot), true, this);
-	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params);
+	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params);
 
-	FVector BulletLocation = bHit ? Hit.ImpactPoint : End;
+	FVector BulletLocation = bHit ? Hit.ImpactPoint : TraceEnd;
 	const bool bHitEnemy = bHit && Cast<AOBEnemy>(Hit.GetActor()) != nullptr;
-	OnPlayerShoot(Start, End, BulletLocation, bHit, bHitEnemy);
+	OnPlayerShoot(TraceStart, TraceEnd, BulletLocation, bHit, bHitEnemy);
 	if (bHit)
 	{
 		if (AOBEnemy* Enemy = Cast<AOBEnemy>(Hit.GetActor()))
@@ -208,7 +256,7 @@ void AOBCharacter::Shoot()
 			Enemy->KillAndDropBullet(Hit.ImpactPoint);
 			if (AOBGameMode* OneBulletMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOBGameMode>() : nullptr)
 			{
-				OneBulletMode->PlayBulletFlight(Start, BulletLocation, Enemy->GetDroppedBulletPickup());
+				OneBulletMode->PlayBulletFlight(BulletVisualStart, BulletLocation, Enemy->GetDroppedBulletPickup());
 			}
 			return;
 		}
@@ -217,7 +265,7 @@ void AOBCharacter::Shoot()
 	AOBBulletPickup* DroppedPickup = DropBulletAt(BulletLocation);
 	if (AOBGameMode* OneBulletMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOBGameMode>() : nullptr)
 	{
-		OneBulletMode->PlayBulletFlight(Start, BulletLocation, DroppedPickup);
+		OneBulletMode->PlayBulletFlight(BulletVisualStart, BulletLocation, DroppedPickup);
 	}
 }
 
@@ -319,6 +367,7 @@ void AOBCharacter::RecoverBullet()
 	if (AOBGameState* OneBulletState = GetWorld()->GetGameState<AOBGameState>())
 	{
 		OneBulletState->SetBulletReady(true);
+		SetWeaponBulletReady(true);
 	}
 }
 
@@ -345,6 +394,15 @@ void AOBCharacter::SetThirdPersonView(bool bUseThirdPerson)
 	OnPlayerViewModeChanged(bThirdPersonView);
 }
 
+void AOBCharacter::SetCameraWeaponRelativeTransform(const FTransform& NewTransform)
+{
+	CameraWeaponRelativeTransform = NewTransform;
+	if (bAttachWeaponToCamera)
+	{
+		ApplyWeaponReadyTransform(true);
+	}
+}
+
 void AOBCharacter::ToggleImmortalMode()
 {
 	bImmortalMode = !bImmortalMode;
@@ -361,6 +419,7 @@ void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& 
 	ActiveDodgeElapsed = 0.0f;
 	ActiveDodgePreviousAlpha = 0.0f;
 	RemainingRecoilPitch = 0.0f;
+	SetWeaponBulletReady(true, true);
 
 	GetWorldTimerManager().ClearTimer(KickCooldownTimerHandle);
 	GetWorldTimerManager().ClearTimer(DodgeCooldownTimerHandle);
@@ -638,6 +697,142 @@ void AOBCharacter::ConfigureFullBodyShadowMesh()
 	}
 }
 
+void AOBCharacter::ConfigureWeapon()
+{
+	if (!WeaponMesh)
+	{
+		return;
+	}
+
+	if (USceneComponent* AttachParent = GetWeaponAttachParent())
+	{
+		const FName AttachSocket = bAttachWeaponToCamera ? NAME_None : WeaponAttachSocketName;
+		WeaponMesh->AttachToComponent(AttachParent, FAttachmentTransformRules::KeepRelativeTransform, AttachSocket);
+	}
+	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	WeaponMesh->SetCastShadow(true);
+	if (WeaponModel)
+	{
+		WeaponMesh->SetSkeletalMesh(WeaponModel);
+	}
+}
+
+void AOBCharacter::ApplyWeaponReadyTransform(bool bSnap)
+{
+	if (!WeaponMesh || !bWeaponBulletReady)
+	{
+		return;
+	}
+
+	if (bSnap || WeaponPoseBlendSpeed <= KINDA_SMALL_NUMBER)
+	{
+		WeaponMesh->SetRelativeTransform(GetWeaponReadyTargetTransform());
+	}
+}
+
+void AOBCharacter::SetWeaponBulletReady(bool bReady, bool bSnap)
+{
+	const bool bStateChanged = bWeaponBulletReady != bReady;
+	bWeaponBulletReady = bReady;
+	if (WeaponMesh)
+	{
+		WeaponMesh->SetHiddenInGame(!bReady, true);
+		WeaponMesh->SetVisibility(bReady, true);
+		if (bReady && bSnap)
+		{
+			ApplyWeaponReadyTransform(true);
+		}
+	}
+
+	if (bStateChanged && bUseSimpleLocomotionAnimations && !bDead && !bPlayingActionAnimation)
+	{
+		ActiveLocomotionAnimation = nullptr;
+		UpdateSimpleLocomotionAnimation();
+	}
+
+	OnPlayerWeaponStateChanged(bReady);
+}
+
+void AOBCharacter::UpdateWeaponPose(float DeltaSeconds)
+{
+	if (!WeaponMesh || !bWeaponBulletReady)
+	{
+		return;
+	}
+
+	const FTransform& TargetTransform = GetWeaponReadyTargetTransform();
+	if (WeaponPoseBlendSpeed <= KINDA_SMALL_NUMBER)
+	{
+		WeaponMesh->SetRelativeTransform(TargetTransform);
+		return;
+	}
+
+	const float Alpha = FMath::Clamp(WeaponPoseBlendSpeed * DeltaSeconds, 0.0f, 1.0f);
+	FTransform SmoothedTransform;
+	SmoothedTransform.Blend(WeaponMesh->GetRelativeTransform(), TargetTransform, Alpha);
+	WeaponMesh->SetRelativeTransform(SmoothedTransform);
+}
+
+USceneComponent* AOBCharacter::GetWeaponAttachParent() const
+{
+	if (bAttachWeaponToCamera && FirstPersonCamera)
+	{
+		return FirstPersonCamera;
+	}
+
+	return GetMesh();
+}
+
+const FTransform& AOBCharacter::GetWeaponReadyTargetTransform() const
+{
+	return bAttachWeaponToCamera ? CameraWeaponRelativeTransform : WeaponReadyRelativeTransform;
+}
+
+void AOBCharacter::PlayShootEffect()
+{
+	if (!ShootEffect || !WeaponMesh)
+	{
+		return;
+	}
+
+	const FTransform MuzzleTransform = WeaponMesh->DoesSocketExist(ShootEffectSocketName)
+		? WeaponMesh->GetSocketTransform(ShootEffectSocketName)
+		: WeaponMesh->GetComponentTransform();
+	UGameplayStatics::SpawnEmitterAtLocation(
+		GetWorld(),
+		ShootEffect,
+		MuzzleTransform,
+		true,
+		EPSCPoolMethod::AutoRelease);
+}
+
+void AOBCharacter::PlayWeaponShootAnimation()
+{
+	if (!WeaponShootAnimation || !WeaponMesh || !IsAnimationCompatibleWithMesh(WeaponShootAnimation, WeaponMesh))
+	{
+		if (WeaponShootAnimation && WeaponMesh)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Skipping weapon shoot animation %s: it uses a different skeleton than weapon %s."), *GetNameSafe(WeaponShootAnimation), *GetNameSafe(WeaponModel));
+		}
+		return;
+	}
+
+	WeaponMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+	WeaponMesh->PlayAnimation(WeaponShootAnimation, false);
+}
+
+FVector AOBCharacter::GetBulletVisualStartLocation(const FVector& TraceStart) const
+{
+	if (!bUseWeaponMuzzleForBulletFlight || !WeaponMesh)
+	{
+		return TraceStart;
+	}
+
+	return WeaponMesh->DoesSocketExist(ShootEffectSocketName)
+		? WeaponMesh->GetSocketLocation(ShootEffectSocketName)
+		: WeaponMesh->GetComponentLocation();
+}
+
 void AOBCharacter::HideFirstPersonHead()
 {
 	if (!bHideHeadForFirstPerson || !IsLocallyControlled() || !GetMesh())
@@ -702,9 +897,14 @@ void AOBCharacter::UpdateSimpleLocomotionAnimation()
 	}
 
 	const bool bHasMovementInput = !GetPendingMovementInputVector().IsNearlyZero() || !GetLastMovementInputVector().IsNearlyZero();
-	UAnimationAsset* DesiredAnimation = bHasMovementInput && GetVelocity().SizeSquared2D() >= FMath::Square(RunAnimationMinSpeed)
-		? RunAnimation.Get()
+	const bool bRunning = bHasMovementInput && GetVelocity().SizeSquared2D() >= FMath::Square(RunAnimationMinSpeed);
+	UAnimationAsset* DesiredRunAnimation = bWeaponBulletReady && PistolRunAnimation
+		? PistolRunAnimation.Get()
+		: RunAnimation.Get();
+	UAnimationAsset* DesiredIdleAnimation = bWeaponBulletReady && PistolIdleAnimation
+		? PistolIdleAnimation.Get()
 		: IdleAnimation.Get();
+	UAnimationAsset* DesiredAnimation = bRunning ? DesiredRunAnimation : DesiredIdleAnimation;
 	if (!DesiredAnimation || DesiredAnimation == ActiveLocomotionAnimation)
 	{
 		return;
@@ -764,7 +964,14 @@ void AOBCharacter::ApplyViewMode()
 	FirstPersonCamera->SetActive(!bThirdPersonView);
 	ThirdPersonCamera->SetActive(bThirdPersonView);
 
-	if (!GetMesh() || !IsLocallyControlled())
+	if (!GetMesh())
+	{
+		return;
+	}
+
+	GetMesh()->SetOwnerNoSee(!bThirdPersonView && bAttachWeaponToCamera && bHideBodyForFirstPersonCameraWeapon);
+
+	if (!IsLocallyControlled())
 	{
 		return;
 	}
@@ -773,7 +980,7 @@ void AOBCharacter::ApplyViewMode()
 	{
 		GetMesh()->UnHideBoneByName(TEXT("head"));
 	}
-	else
+	else if (!bAttachWeaponToCamera || !bHideBodyForFirstPersonCameraWeapon)
 	{
 		HideFirstPersonHead();
 	}
@@ -782,6 +989,36 @@ void AOBCharacter::ApplyViewMode()
 UCameraComponent* AOBCharacter::GetShootingCamera() const
 {
 	return bThirdPersonView && ThirdPersonCamera ? ThirdPersonCamera : FirstPersonCamera;
+}
+
+void AOBCharacter::GetCrosshairTrace(FVector& OutTraceStart, FVector& OutTraceEnd) const
+{
+	const UCameraComponent* ShootingCamera = GetShootingCamera();
+	OutTraceStart = ShootingCamera ? ShootingCamera->GetComponentLocation() : GetActorLocation();
+	FVector AimDirection = ShootingCamera ? ShootingCamera->GetForwardVector() : GetActorForwardVector();
+
+	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
+	{
+		int32 ViewportX = 0;
+		int32 ViewportY = 0;
+		PlayerController->GetViewportSize(ViewportX, ViewportY);
+		if (ViewportX > 0 && ViewportY > 0)
+		{
+			FVector WorldLocation = FVector::ZeroVector;
+			FVector WorldDirection = FVector::ZeroVector;
+			if (PlayerController->DeprojectScreenPositionToWorld(
+				static_cast<float>(ViewportX) * 0.5f,
+				static_cast<float>(ViewportY) * 0.5f,
+				WorldLocation,
+				WorldDirection))
+			{
+				OutTraceStart = WorldLocation;
+				AimDirection = WorldDirection.GetSafeNormal();
+			}
+		}
+	}
+
+	OutTraceEnd = OutTraceStart + AimDirection * ShootRange;
 }
 
 AOBBulletPickup* AOBCharacter::DropBulletAt(const FVector& Location)

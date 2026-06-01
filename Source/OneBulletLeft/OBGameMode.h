@@ -7,7 +7,6 @@
 
 class AOBBulletPickup;
 class AOBCharacter;
-
 USTRUCT(BlueprintType)
 struct FOBWaveDefinition
 {
@@ -38,9 +37,6 @@ public:
 	AOBGameMode();
 
 	virtual void BeginPlay() override;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Arena")
-	bool bBuildGreyboxArena = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Window")
 	bool bForceWindowedMode = true;
@@ -107,7 +103,6 @@ protected:
 	int32 RemainingFastInWave = 0;
 	int32 RemainingHeavyInWave = 0;
 
-	void BuildGreyboxArena();
 	void ApplyWindowMode();
 	void SpawnEnemyWaveTick();
 	void StartNextWave();
@@ -118,5 +113,4 @@ protected:
 	bool FindRestartTransform(FVector& OutLocation, FRotator& OutRotation) const;
 	bool TryChooseSpawnLocation(FVector& OutLocation) const;
 	int32 CountLiveEnemies() const;
-	void SpawnBlock(const FVector& Location, const FVector& Scale, const FName& Name);
 };
