@@ -35,13 +35,13 @@ public:
 	float HeavySpeed = 260.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0", ClampMax="1.0"))
-	float PlayerHasBulletSpeedMultiplier = 0.25f;
+	float PlayerHasBulletSpeedMultiplier = 0.35f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0", ClampMax="1.0", DisplayName="Player Has Bullet Attack Speed Multiplier"))
-	float PlayerHasBulletAttackSpeedMultiplier = 0.25f;
+	float PlayerHasBulletAttackSpeedMultiplier = 0.30f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0", DisplayName="Player Has Bullet Attack Radius"))
-	float PlayerHasBulletAttackRadius = 320.0f;
+	float PlayerHasBulletAttackRadius = 450.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0"))
 	float PatrolRadius = 2600.0f;

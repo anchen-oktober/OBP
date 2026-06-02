@@ -122,6 +122,14 @@ void AOBEnemy::Tick(float DeltaSeconds)
 			bHasPatrolTarget = false;
 			RequestMove();
 		}
+		else if (bHoldingBullet && !ShouldPatrolWhilePlayerHasBullet())
+		{
+			const FVector DirectionToPlayer = CalculatePatrolMovementDirection((PlayerTarget->GetActorLocation() - GetActorLocation()).GetSafeNormal2D());
+			if (!DirectionToPlayer.IsNearlyZero())
+			{
+				AddMovementInput(DirectionToPlayer, 1.0f, true);
+			}
+		}
 		else if (bHoldingBullet && bMovingToPatrolTarget)
 		{
 			UpdatePatrolMovement(DeltaSeconds);
@@ -287,9 +295,9 @@ void AOBEnemy::StopPursuitForPlayerDeath()
 
 void AOBEnemy::NormalizePressureSettings()
 {
-	PlayerHasBulletSpeedMultiplier = FMath::Min(PlayerHasBulletSpeedMultiplier, 0.25f);
-	PlayerHasBulletAttackSpeedMultiplier = FMath::Min(PlayerHasBulletAttackSpeedMultiplier, 0.25f);
-	PlayerHasBulletAttackRadius = FMath::Min(PlayerHasBulletAttackRadius, 320.0f);
+	PlayerHasBulletSpeedMultiplier = FMath::Clamp(PlayerHasBulletSpeedMultiplier, 0.0f, 1.0f);
+	PlayerHasBulletAttackSpeedMultiplier = FMath::Clamp(PlayerHasBulletAttackSpeedMultiplier, 0.0f, 1.0f);
+	PlayerHasBulletAttackRadius = FMath::Max(PlayerHasBulletAttackRadius, 0.0f);
 	PatrolRadius = FMath::Max(PatrolRadius, 2600.0f);
 	PatrolPointJitter = FMath::Max(PatrolPointJitter, 0.0f);
 	PatrolMinTargetDistance = FMath::Clamp(PatrolMinTargetDistance, PatrolAcceptanceRadius, PatrolRadius * 0.75f);
@@ -353,17 +361,7 @@ FVector AOBEnemy::ChooseWholeArenaPatrolTarget() const
 
 	if (UNavigationSystemV1* NavSystem = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld()))
 	{
-		for (int32 Attempt = 0; Attempt < 16; ++Attempt)
-		{
-			FNavLocation RandomLocation;
-			if (NavSystem->GetRandomReachablePointInRadius(GetActorLocation(), EffectivePatrolRadius, RandomLocation)
-				&& FVector::DistSquared2D(GetActorLocation(), RandomLocation.Location) >= FMath::Square(MinTargetDistance))
-			{
-				return RandomLocation.Location;
-			}
-		}
-
-		for (int32 Attempt = 0; Attempt < 8; ++Attempt)
+		for (int32 Attempt = 0; Attempt < 32; ++Attempt)
 		{
 			FNavLocation RandomLocation;
 			if (NavSystem->GetRandomReachablePointInRadius(PatrolOrigin, EffectivePatrolRadius, RandomLocation)
@@ -408,6 +406,11 @@ FVector AOBEnemy::ChooseWholeArenaPatrolTarget() const
 	const FVector RandomDirection = FMath::VRand().GetSafeNormal2D();
 	FVector Candidate = GetActorLocation() + RandomDirection * MinTargetDistance;
 	Candidate.Z = GetActorLocation().Z;
+	if (ProjectPointToNavigation(Candidate))
+	{
+		return Candidate;
+	}
+
 	return Candidate;
 }
 
@@ -523,19 +526,21 @@ void AOBEnemy::UpdatePatrolMovement(float DeltaSeconds)
 	if (DistanceToTargetSquared <= FMath::Square(PatrolAcceptanceRadius))
 	{
 		ChooseNewPatrolTarget();
+		return;
 	}
 
 	const float MovedDistanceSquared = FVector::DistSquared2D(GetActorLocation(), LastPatrolLocation);
-	if (MovedDistanceSquared <= FMath::Square(8.0f))
+	if (MovedDistanceSquared <= FMath::Square(12.0f))
 	{
 		PatrolStuckTime += DeltaSeconds;
-		if (PatrolStuckTime >= 0.65f)
+		if (PatrolStuckTime >= 0.45f)
 		{
 			if (AAIController* AI = Cast<AAIController>(GetController()))
 			{
 				AI->StopMovement();
 			}
 			ChooseNewPatrolTarget();
+			return;
 		}
 	}
 	else
@@ -566,7 +571,11 @@ void AOBEnemy::ChooseNewPatrolTarget()
 {
 	bHasPatrolTarget = false;
 	CurrentApproachTarget = GetOrChoosePatrolTarget();
-	MoveToCurrentTarget(PatrolAcceptanceRadius, true, false);
+	if (FVector::DistSquared2D(GetActorLocation(), CurrentApproachTarget) <= FMath::Square(PatrolAcceptanceRadius))
+	{
+		bHasPatrolTarget = false;
+		CurrentApproachTarget = GetOrChoosePatrolTarget();
+	}
 }
 
 void AOBEnemy::MoveAggressivelyToPlayer()
@@ -665,12 +674,6 @@ void AOBEnemy::RequestMove()
 		{
 			bMovingToPatrolTarget = true;
 			CurrentApproachTarget = GetOrChoosePatrolTarget();
-			if (!MoveToCurrentTarget(PatrolAcceptanceRadius, true, false))
-			{
-				bHasPatrolTarget = false;
-				CurrentApproachTarget = GetOrChoosePatrolTarget();
-				MoveToCurrentTarget(PatrolAcceptanceRadius, true, false);
-			}
 		}
 		else
 		{

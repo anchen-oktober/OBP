@@ -10,9 +10,9 @@ IDLE_ANIMATION = unreal.load_asset("/Game/Assets/Animations/Idle")
 RUN_ANIMATION = unreal.load_asset("/Game/Assets/Animations/Fast_Run")
 
 DEFAULTS = {
-    "PlayerHasBulletSpeedMultiplier": 0.25,
-    "PlayerHasBulletAttackSpeedMultiplier": 0.25,
-    "PlayerHasBulletAttackRadius": 320.0,
+    "PlayerHasBulletSpeedMultiplier": 0.35,
+    "PlayerHasBulletAttackSpeedMultiplier": 0.30,
+    "PlayerHasBulletAttackRadius": 450.0,
     "PatrolRadius": 2600.0,
     "PatrolCenter": unreal.Vector(0.0, 0.0, 0.0),
     "PatrolPointJitter": 420.0,

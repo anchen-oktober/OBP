@@ -196,6 +196,29 @@ Blueprint-события игрока:
 
 Настраиваются `Enemy Type`, скорость, touch-kill, pressure/окружение, `Idle Animation`, `Run Animation`, `Death Animation`, `Death Sound`, а также крепление пули к телу: `Bullet Attach Bone` и `Bullet Attach Offset`.
 
+#### Настройки поведения врагов
+
+Открывать в Unreal Editor: `/Game/OneBullet/Blueprints/BP_OBEnemy_Fast` и `/Game/OneBullet/Blueprints/BP_OBEnemy_Heavy`.
+Все поля ниже находятся в Details у Blueprint-класса врага, в категориях `OneBulletSettings` и `OneBulletSettings|Pressure`.
+
+| Поле | Сейчас | Что делает |
+| --- | ---: | --- |
+| `Fast Speed` | `760` | Базовая скорость Fast-врага, когда пули нет. |
+| `Heavy Speed` | `260` | Базовая скорость Heavy-врага, когда пули нет. |
+| `Player Has Bullet Speed Multiplier` | `0.35` | Множитель скорости в режиме патруля, когда у игрока есть пуля. `0.35` значит 35% от базовой скорости. |
+| `Player Has Bullet Attack Speed Multiplier` | `0.30` | Множитель скорости, когда пуля есть, но игрок вошел в радиус атаки. |
+| `Player Has Bullet Attack Radius` | `450` | Радиус реакции при наличии пули. Снаружи враг патрулирует; внутри начинает нападать. |
+| `Patrol Radius` | `2600` | Размер территории патруля вокруг `Patrol Center`. |
+| `Patrol Center` | `(0, 0, 0)` | Центр арены для выбора дальних патрульных точек. |
+| `Fast Surround Radius` | `320` | Радиус окружения Fast-врага, когда пули нет. |
+| `Heavy Surround Radius` | `420` | Радиус окружения Heavy-врага, когда пули нет. |
+
+Логика состояний:
+
+1. `Bullet: Ready`: враги медленно патрулируют по территории вокруг `Patrol Center`.
+2. `Bullet: Ready` и игрок ближе `Player Has Bullet Attack Radius`: враги атакуют со скоростью `Base Speed * Player Has Bullet Attack Speed Multiplier`.
+3. `Bullet: Lost`: враги используют обычную скорость и окружают игрока через `Fast Surround Radius` / `Heavy Surround Radius`.
+
 | Событие | Данные | Применение |
 | --- | --- | --- |
 | `OnEnemyDeath` | `Drop Location` | death effect, звук, дополнительная реакция |
