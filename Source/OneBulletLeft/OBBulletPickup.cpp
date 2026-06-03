@@ -37,8 +37,8 @@ AOBBulletPickup::AOBBulletPickup()
 	BeaconLight->SetupAttachment(RootComponent);
 	BeaconLight->SetRelativeLocation(FVector(0.0f, 0.0f, 18.0f));
 	BeaconLight->SetLightColor(FLinearColor(0.14f, 0.78f, 1.0f));
-	BeaconLight->SetIntensity(BeaconIntensity);
-	BeaconLight->SetAttenuationRadius(420.0f);
+	BeaconLight->SetIntensity(FMath::Max(BeaconIntensity, 6200.0f));
+	BeaconLight->SetAttenuationRadius(FMath::Max(BeaconAttenuationRadius, 720.0f));
 }
 
 void AOBBulletPickup::BeginPlay()
@@ -200,7 +200,10 @@ void AOBBulletPickup::UpdatePickupPresentation_Implementation(float DeltaSeconds
 	Mesh->SetRelativeScale3D(FVector(MainMeshScale * Pulse));
 	if (BeaconLight)
 	{
-		BeaconLight->SetIntensity(BeaconIntensity + FMath::Max(0.0f, FMath::Sin(RunningTime * BobSpeed)) * BeaconPulseAmount);
+		const float EffectiveBeaconIntensity = FMath::Max(BeaconIntensity, 6200.0f);
+		const float EffectivePulseAmount = FMath::Max(BeaconPulseAmount, 1800.0f);
+		BeaconLight->SetIntensity(EffectiveBeaconIntensity + FMath::Max(0.0f, FMath::Sin(RunningTime * BobSpeed)) * EffectivePulseAmount);
+		BeaconLight->SetAttenuationRadius(FMath::Max(BeaconAttenuationRadius, 720.0f));
 	}
 }
 

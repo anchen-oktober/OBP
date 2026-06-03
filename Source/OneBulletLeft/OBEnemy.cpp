@@ -256,6 +256,11 @@ void AOBEnemy::ApplyKick(const FVector& Direction)
 
 void AOBEnemy::TriggerSpawnFeedback()
 {
+	if (SpawnSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, SpawnSound, GetActorLocation());
+	}
+
 	OnEnemySpawned(EnemyType, GetActorLocation());
 }
 

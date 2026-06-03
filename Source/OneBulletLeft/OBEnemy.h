@@ -100,6 +100,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
 	TObjectPtr<class USoundBase> DeathSound;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
+	TObjectPtr<class USoundBase> SpawnSound;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Feel")
 	float ShotStaggerStrength = 340.0f;
 

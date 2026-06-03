@@ -115,10 +115,13 @@ protected:
 	float PulseScale = 0.12f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Presentation")
-	float BeaconIntensity = 2600.0f;
+	float BeaconIntensity = 7200.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Presentation")
-	float BeaconPulseAmount = 900.0f;
+	float BeaconPulseAmount = 2200.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Presentation", meta=(ClampMin="0.0", UIMin="200.0", UIMax="1200.0"))
+	float BeaconAttenuationRadius = 780.0f;
 
 	UFUNCTION(BlueprintNativeEvent, Category="OneBulletSettings|Presentation")
 	void UpdatePickupPresentation(float DeltaSeconds, float RunningTime);
