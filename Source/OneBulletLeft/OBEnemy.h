@@ -41,7 +41,7 @@ public:
 	float PlayerHasBulletAttackSpeedMultiplier = 0.30f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0", DisplayName="Player Has Bullet Attack Radius"))
-	float PlayerHasBulletAttackRadius = 450.0f;
+	float PlayerHasBulletAttackRadius = 700.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0"))
 	float PatrolRadius = 2600.0f;
@@ -57,6 +57,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="1.0"))
 	float PatrolAcceptanceRadius = 120.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.1", ClampMax="1.0"))
+	float PatrolPerimeterRadiusMultiplier = 0.78f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="5.0", ClampMax="180.0"))
+	float PatrolPerimeterStepDegrees = 45.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0"))
 	float PatrolObstacleProbeDistance = 260.0f;
@@ -119,7 +125,7 @@ public:
 	float WalkAnimationMinSpeed = 10.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(EditCondition="bUseSimpleLocomotionAnimations", ClampMin="0.0"))
-	float RunAnimationMinSpeed = 220.0f;
+	float RunAnimationMinSpeed = 340.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(EditCondition="bUseSimpleLocomotionAnimations", ClampMin="0.0"))
 	float WalkAnimationPlayRate = 0.55f;
@@ -190,6 +196,8 @@ protected:
 	FVector CurrentPatrolTarget = FVector::ZeroVector;
 	FVector CurrentApproachTarget = FVector::ZeroVector;
 	FVector LastPatrolLocation = FVector::ZeroVector;
+	TArray<FVector> CurrentPatrolPath;
+	int32 CurrentPatrolPathIndex = 0;
 	float PatrolStuckTime = 0.0f;
 	UAnimationAsset* ActiveLocomotionAnimation = nullptr;
 
@@ -207,9 +215,11 @@ protected:
 	FVector GetOrChoosePatrolTarget();
 	FVector ChooseWholeArenaPatrolTarget() const;
 	bool ProjectPointToNavigation(FVector& InOutLocation) const;
+	bool IsPatrolCandidateClear(const FVector& Candidate) const;
 	bool TryGetPatrolSteeringTarget(FVector& OutTarget) const;
 	FVector CalculatePatrolMovementDirection(const FVector& DesiredDirection) const;
 	bool MoveToCurrentTarget(float AcceptanceRadius, bool bAllowDirectFallback, bool bAllowPartialPath);
+	bool RebuildPatrolPath();
 	void UpdatePatrolMovement(float DeltaSeconds);
 	void ChooseNewPatrolTarget();
 	void MoveAggressivelyToPlayer();

@@ -7,17 +7,20 @@ ASSETS = [
 ]
 
 IDLE_ANIMATION = unreal.load_asset("/Game/Assets/Animations/Idle")
+WALK_ANIMATION = unreal.load_asset("/Game/Assets/Animations/Standing_Run_Forward")
 RUN_ANIMATION = unreal.load_asset("/Game/Assets/Animations/Fast_Run")
 
 DEFAULTS = {
     "PlayerHasBulletSpeedMultiplier": 0.35,
     "PlayerHasBulletAttackSpeedMultiplier": 0.30,
-    "PlayerHasBulletAttackRadius": 450.0,
+    "PlayerHasBulletAttackRadius": 700.0,
     "PatrolRadius": 2600.0,
     "PatrolCenter": unreal.Vector(0.0, 0.0, 0.0),
     "PatrolPointJitter": 420.0,
     "PatrolMinTargetDistance": 900.0,
     "PatrolAcceptanceRadius": 120.0,
+    "PatrolPerimeterRadiusMultiplier": 0.78,
+    "PatrolPerimeterStepDegrees": 45.0,
     "PatrolObstacleProbeDistance": 260.0,
     "PatrolObstacleProbeRadius": 70.0,
     "FastSurroundRadius": 320.0,
@@ -27,10 +30,10 @@ DEFAULTS = {
     "bUseSurroundMovement": True,
     "bUseSimpleLocomotionAnimations": True,
     "IdleAnimation": IDLE_ANIMATION,
-    "WalkAnimation": RUN_ANIMATION,
+    "WalkAnimation": WALK_ANIMATION or RUN_ANIMATION,
     "RunAnimation": RUN_ANIMATION,
     "WalkAnimationMinSpeed": 10.0,
-    "RunAnimationMinSpeed": 220.0,
+    "RunAnimationMinSpeed": 340.0,
     "WalkAnimationPlayRate": 0.55,
     "RunAnimationPlayRate": 1.0,
 }

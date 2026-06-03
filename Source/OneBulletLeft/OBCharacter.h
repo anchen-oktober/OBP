@@ -185,6 +185,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Shot")
 	TObjectPtr<USoundBase> ShootSound;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Impact")
+	TObjectPtr<USoundBase> BulletImpactSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Impact")
+	TObjectPtr<UParticleSystem> BulletImpactEffect;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Impact", meta=(ClampMin="80.0", UIMin="120.0", UIMax="350.0"))
+	float BulletRicochetWallClearance = 165.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Impact", meta=(ClampMin="0.0", UIMin="80.0", UIMax="500.0"))
+	float BulletRicochetDropDistance = 260.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Impact", meta=(ClampMin="0.0", UIMin="0.0", UIMax="250.0"))
+	float BulletRicochetUpLift = 90.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Impact", meta=(ClampMin="100.0", UIMin="300.0", UIMax="1200.0"))
+	float BulletRicochetFloorTraceDistance = 900.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon|Shot")
 	TObjectPtr<UAnimationAsset> WeaponShootAnimation;
 
@@ -342,8 +360,10 @@ protected:
 	USceneComponent* GetWeaponAttachParent() const;
 	const FTransform& GetWeaponReadyTargetTransform() const;
 	void PlayShootEffect();
+	void PlayBulletImpactFeedback(const FHitResult& Hit) const;
 	void PlayWeaponShootAnimation();
 	FVector GetBulletVisualStartLocation(const FVector& TraceStart) const;
+	FVector ResolveBulletDropLocationAfterImpact(const FHitResult& Hit) const;
 	void PlayActionAnimation(UAnimationAsset* Animation, float Duration);
 	void PlayDeathAnimation();
 	void UpdateSimpleLocomotionAnimation();

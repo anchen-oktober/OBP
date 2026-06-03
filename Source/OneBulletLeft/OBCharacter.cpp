@@ -80,6 +80,18 @@ AOBCharacter::AOBCharacter()
 		ShootSound = DefaultShootSound.Object;
 	}
 
+	static ConstructorHelpers::FObjectFinder<USoundBase> DefaultBulletImpactSound(TEXT("/Game/Sound/cue/Rock_Impact_37_Cue.Rock_Impact_37_Cue"));
+	if (DefaultBulletImpactSound.Succeeded())
+	{
+		BulletImpactSound = DefaultBulletImpactSound.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UParticleSystem> DefaultBulletImpactEffect(TEXT("/Game/Assets/VFX/Realistic_Starter_VFX_Pack_Vol2/Particles/Hit/P_Concrete.P_Concrete"));
+	if (DefaultBulletImpactEffect.Succeeded())
+	{
+		BulletImpactEffect = DefaultBulletImpactEffect.Object;
+	}
+
 	static ConstructorHelpers::FObjectFinder<UAnimSequence> DefaultWeaponShootAnimation(TEXT("/Game/MilitaryWeapDark/Weapons/Anims/Fire_Pistol_W.Fire_Pistol_W"));
 	if (DefaultWeaponShootAnimation.Succeeded())
 	{
@@ -260,6 +272,12 @@ void AOBCharacter::Shoot()
 			}
 			return;
 		}
+	}
+
+	if (bHit)
+	{
+		PlayBulletImpactFeedback(Hit);
+		BulletLocation = ResolveBulletDropLocationAfterImpact(Hit);
 	}
 
 	AOBBulletPickup* DroppedPickup = DropBulletAt(BulletLocation);
@@ -806,6 +824,26 @@ void AOBCharacter::PlayShootEffect()
 		EPSCPoolMethod::AutoRelease);
 }
 
+void AOBCharacter::PlayBulletImpactFeedback(const FHitResult& Hit) const
+{
+	const FVector ImpactNormal = Hit.ImpactNormal.GetSafeNormal();
+	const FVector ImpactLocation = Hit.ImpactPoint + ImpactNormal * 4.0f;
+	if (BulletImpactSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, BulletImpactSound, ImpactLocation);
+	}
+	if (BulletImpactEffect)
+	{
+		UGameplayStatics::SpawnEmitterAtLocation(
+			GetWorld(),
+			BulletImpactEffect,
+			ImpactLocation,
+			ImpactNormal.Rotation(),
+			true,
+			EPSCPoolMethod::AutoRelease);
+	}
+}
+
 void AOBCharacter::PlayWeaponShootAnimation()
 {
 	if (!WeaponShootAnimation || !WeaponMesh || !IsAnimationCompatibleWithMesh(WeaponShootAnimation, WeaponMesh))
@@ -831,6 +869,71 @@ FVector AOBCharacter::GetBulletVisualStartLocation(const FVector& TraceStart) co
 	return WeaponMesh->DoesSocketExist(ShootEffectSocketName)
 		? WeaponMesh->GetSocketLocation(ShootEffectSocketName)
 		: WeaponMesh->GetComponentLocation();
+}
+
+FVector AOBCharacter::ResolveBulletDropLocationAfterImpact(const FHitResult& Hit) const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return Hit.ImpactPoint;
+	}
+
+	const FVector IncomingDirection = (Hit.TraceEnd - Hit.TraceStart).GetSafeNormal();
+	const FVector ImpactNormal = Hit.ImpactNormal.GetSafeNormal();
+	FVector RicochetDirection = FMath::GetReflectionVector(IncomingDirection, ImpactNormal).GetSafeNormal2D();
+	if (RicochetDirection.IsNearlyZero())
+	{
+		RicochetDirection = ImpactNormal.GetSafeNormal2D();
+	}
+	if (RicochetDirection.IsNearlyZero())
+	{
+		RicochetDirection = -IncomingDirection.GetSafeNormal2D();
+	}
+	if (RicochetDirection.IsNearlyZero())
+	{
+		RicochetDirection = GetActorForwardVector().GetSafeNormal2D();
+	}
+
+	const float WallClearance = FMath::Max(BulletRicochetWallClearance, 145.0f);
+	const float DropDistance = FMath::Max(BulletRicochetDropDistance, 180.0f);
+	const FVector OutFromWall = ImpactNormal * WallClearance;
+	const FVector FloorTraceLift = FVector::UpVector * FMath::Max(BulletRicochetUpLift, 60.0f);
+	const float FloorTraceDistance = FMath::Max(BulletRicochetFloorTraceDistance, 600.0f);
+
+	TArray<FVector> CandidateDirections;
+	CandidateDirections.Add(RicochetDirection);
+	CandidateDirections.Add((RicochetDirection + ImpactNormal.GetSafeNormal2D()).GetSafeNormal2D());
+	CandidateDirections.Add(ImpactNormal.GetSafeNormal2D());
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(OneBulletRicochetDrop), false, this);
+	for (const FVector& CandidateDirection : CandidateDirections)
+	{
+		if (CandidateDirection.IsNearlyZero())
+		{
+			continue;
+		}
+
+		for (const float DistanceScale : {1.0f, 1.45f})
+		{
+			const FVector ProbeCenter = Hit.ImpactPoint + OutFromWall + CandidateDirection * DropDistance * DistanceScale + FloorTraceLift;
+			const FVector FloorTraceStart = ProbeCenter + FVector::UpVector * 120.0f;
+			const FVector FloorTraceEnd = ProbeCenter - FVector::UpVector * FloorTraceDistance;
+
+			FHitResult FloorHit;
+			if (World->LineTraceSingleByChannel(FloorHit, FloorTraceStart, FloorTraceEnd, ECC_Visibility, Params)
+				&& FloorHit.bBlockingHit
+				&& FloorHit.ImpactNormal.Z >= 0.55f)
+			{
+				return FloorHit.ImpactPoint;
+			}
+		}
+	}
+
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	const float PlayerFloorZ = GetActorLocation().Z - (Capsule ? Capsule->GetScaledCapsuleHalfHeight() : 96.0f);
+	const FVector Fallback = Hit.ImpactPoint + OutFromWall + RicochetDirection * DropDistance;
+	return FVector(Fallback.X, Fallback.Y, PlayerFloorZ);
 }
 
 void AOBCharacter::HideFirstPersonHead()

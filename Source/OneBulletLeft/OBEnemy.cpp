@@ -99,6 +99,8 @@ void AOBEnemy::Tick(float DeltaSeconds)
 		bUsingDirectMovementFallback = false;
 		bMovingToPatrolTarget = false;
 		bHasPatrolTarget = false;
+		CurrentPatrolPath.Reset();
+		CurrentPatrolPathIndex = 0;
 		if (AAIController* AI = Cast<AAIController>(GetController()))
 		{
 			AI->StopMovement();
@@ -116,27 +118,26 @@ void AOBEnemy::Tick(float DeltaSeconds)
 	bStoppedForPlayerDeath = false;
 	if (!bStunned && PlayerTarget)
 	{
-		if (bHoldingBullet && bMovingToPatrolTarget && !ShouldPatrolWhilePlayerHasBullet())
+		if (bHoldingBullet && ShouldPatrolWhilePlayerHasBullet())
+		{
+			bMovingToPatrolTarget = true;
+			bUsingDirectMovementFallback = false;
+			if (!bHasPatrolTarget)
+			{
+				ChooseNewPatrolTarget();
+			}
+			UpdatePatrolMovement(DeltaSeconds);
+		}
+		else if (bHoldingBullet)
 		{
 			bMovingToPatrolTarget = false;
 			bHasPatrolTarget = false;
-			RequestMove();
-		}
-		else if (bHoldingBullet && !ShouldPatrolWhilePlayerHasBullet())
-		{
-			const FVector DirectionToPlayer = CalculatePatrolMovementDirection((PlayerTarget->GetActorLocation() - GetActorLocation()).GetSafeNormal2D());
-			if (!DirectionToPlayer.IsNearlyZero())
-			{
-				AddMovementInput(DirectionToPlayer, 1.0f, true);
-			}
-		}
-		else if (bHoldingBullet && bMovingToPatrolTarget)
-		{
-			UpdatePatrolMovement(DeltaSeconds);
+			CurrentApproachTarget = PlayerTarget->GetActorLocation();
+			MoveToCurrentTarget(55.0f, false, true);
 		}
 		else if (!bHoldingBullet && bUseDirectLostBulletChase)
 		{
-			ApplyDirectLostBulletChase();
+			MoveAggressivelyToPlayer();
 		}
 		else if (bUsingDirectMovementFallback)
 		{
@@ -301,6 +302,8 @@ void AOBEnemy::NormalizePressureSettings()
 	PatrolRadius = FMath::Max(PatrolRadius, 2600.0f);
 	PatrolPointJitter = FMath::Max(PatrolPointJitter, 0.0f);
 	PatrolMinTargetDistance = FMath::Clamp(PatrolMinTargetDistance, PatrolAcceptanceRadius, PatrolRadius * 0.75f);
+	PatrolPerimeterRadiusMultiplier = FMath::Clamp(PatrolPerimeterRadiusMultiplier, 0.1f, 1.0f);
+	PatrolPerimeterStepDegrees = FMath::Clamp(PatrolPerimeterStepDegrees, 5.0f, 180.0f);
 	PatrolObstacleProbeDistance = FMath::Max(PatrolObstacleProbeDistance, 0.0f);
 	PatrolObstacleProbeRadius = FMath::Max(PatrolObstacleProbeRadius, 0.0f);
 }
@@ -349,6 +352,8 @@ FVector AOBEnemy::GetOrChoosePatrolTarget()
 
 	CurrentPatrolTarget = ChooseWholeArenaPatrolTarget();
 	bHasPatrolTarget = true;
+	CurrentPatrolPath.Reset();
+	CurrentPatrolPathIndex = 0;
 	LastPatrolLocation = GetActorLocation();
 	PatrolStuckTime = 0.0f;
 	return CurrentPatrolTarget;
@@ -358,60 +363,75 @@ FVector AOBEnemy::ChooseWholeArenaPatrolTarget() const
 {
 	const float EffectivePatrolRadius = FMath::Max(PatrolRadius, PatrolAcceptanceRadius * 2.0f);
 	const float MinTargetDistance = FMath::Clamp(PatrolMinTargetDistance, PatrolAcceptanceRadius, EffectivePatrolRadius * 0.75f);
+	FVector FromCenter = GetActorLocation() - PatrolOrigin;
+	FromCenter.Z = 0.0f;
+	if (FromCenter.IsNearlyZero())
+	{
+		const float SeedAngle = FMath::Fmod(static_cast<float>(GetUniqueID() % 360), 360.0f);
+		FromCenter = FVector(FMath::Cos(FMath::DegreesToRadians(SeedAngle)), FMath::Sin(FMath::DegreesToRadians(SeedAngle)), 0.0f);
+	}
+
+	const float BaseAngle = FMath::RadiansToDegrees(FMath::Atan2(FromCenter.Y, FromCenter.X));
+	const int32 DirectionSign = (GetUniqueID() % 2 == 0) ? 1 : -1;
+	const TArray<float> RadiusMultipliers =
+	{
+		PatrolPerimeterRadiusMultiplier,
+		PatrolPerimeterRadiusMultiplier * 0.85f,
+		PatrolPerimeterRadiusMultiplier * 0.70f
+	};
+
+	for (const float RadiusMultiplier : RadiusMultipliers)
+	{
+		const float PerimeterRadius = EffectivePatrolRadius * FMath::Clamp(RadiusMultiplier, 0.1f, 1.0f);
+		for (int32 Attempt = 1; Attempt <= 16; ++Attempt)
+		{
+			const float CandidateAngle = BaseAngle + DirectionSign * PatrolPerimeterStepDegrees * static_cast<float>(Attempt);
+			const FVector Direction(
+				FMath::Cos(FMath::DegreesToRadians(CandidateAngle)),
+				FMath::Sin(FMath::DegreesToRadians(CandidateAngle)),
+				0.0f);
+			const FVector Jitter = Direction.RotateAngleAxis(90.0f, FVector::UpVector) * FMath::FRandRange(-PatrolPointJitter, PatrolPointJitter);
+			FVector Candidate = PatrolOrigin + Direction * PerimeterRadius + Jitter;
+			Candidate.Z = GetActorLocation().Z;
+
+			if (FVector::DistSquared2D(GetActorLocation(), Candidate) <= FMath::Square(MinTargetDistance))
+			{
+				continue;
+			}
+
+			if (ProjectPointToNavigation(Candidate) && IsPatrolCandidateClear(Candidate))
+			{
+				return Candidate;
+			}
+		}
+	}
 
 	if (UNavigationSystemV1* NavSystem = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld()))
 	{
 		for (int32 Attempt = 0; Attempt < 32; ++Attempt)
 		{
 			FNavLocation RandomLocation;
-			if (NavSystem->GetRandomReachablePointInRadius(PatrolOrigin, EffectivePatrolRadius, RandomLocation)
-				&& FVector::DistSquared2D(GetActorLocation(), RandomLocation.Location) >= FMath::Square(MinTargetDistance))
+			if (NavSystem->GetRandomReachablePointInRadius(GetActorLocation(), EffectivePatrolRadius * 0.55f, RandomLocation)
+				&& FVector::DistSquared2D(GetActorLocation(), RandomLocation.Location) >= FMath::Square(MinTargetDistance)
+				&& IsPatrolCandidateClear(RandomLocation.Location))
+			{
+				return RandomLocation.Location;
+			}
+		}
+
+		for (int32 Attempt = 0; Attempt < 32; ++Attempt)
+		{
+			FNavLocation RandomLocation;
+			if (NavSystem->GetRandomReachablePointInRadius(PatrolOrigin, EffectivePatrolRadius * 0.80f, RandomLocation)
+				&& FVector::DistSquared2D(GetActorLocation(), RandomLocation.Location) >= FMath::Square(PatrolAcceptanceRadius * 2.0f)
+				&& IsPatrolCandidateClear(RandomLocation.Location))
 			{
 				return RandomLocation.Location;
 			}
 		}
 	}
 
-	const float HalfRadius = EffectivePatrolRadius * 0.5f;
-	const TArray<FVector> PatrolOffsets =
-	{
-		FVector(EffectivePatrolRadius, 0.0f, 0.0f),
-		FVector(-EffectivePatrolRadius, 0.0f, 0.0f),
-		FVector(0.0f, EffectivePatrolRadius, 0.0f),
-		FVector(0.0f, -EffectivePatrolRadius, 0.0f),
-		FVector(HalfRadius, HalfRadius, 0.0f),
-		FVector(HalfRadius, -HalfRadius, 0.0f),
-		FVector(-HalfRadius, HalfRadius, 0.0f),
-		FVector(-HalfRadius, -HalfRadius, 0.0f)
-	};
-
-	for (int32 Attempt = 0; Attempt < 12; ++Attempt)
-	{
-		const FVector Offset = PatrolOffsets[FMath::RandRange(0, PatrolOffsets.Num() - 1)];
-		const FVector Jitter = FMath::VRand().GetSafeNormal2D() * FMath::FRandRange(0.0f, PatrolPointJitter);
-		FVector Candidate = PatrolOrigin + Offset + Jitter;
-		Candidate.Z = GetActorLocation().Z;
-
-		if (FVector::DistSquared2D(GetActorLocation(), Candidate) <= FMath::Square(MinTargetDistance))
-		{
-			continue;
-		}
-
-		if (ProjectPointToNavigation(Candidate))
-		{
-			return Candidate;
-		}
-	}
-
-	const FVector RandomDirection = FMath::VRand().GetSafeNormal2D();
-	FVector Candidate = GetActorLocation() + RandomDirection * MinTargetDistance;
-	Candidate.Z = GetActorLocation().Z;
-	if (ProjectPointToNavigation(Candidate))
-	{
-		return Candidate;
-	}
-
-	return Candidate;
+	return GetActorLocation();
 }
 
 bool AOBEnemy::ProjectPointToNavigation(FVector& InOutLocation) const
@@ -424,6 +444,22 @@ bool AOBEnemy::ProjectPointToNavigation(FVector& InOutLocation) const
 			InOutLocation = ProjectedLocation.Location;
 			return true;
 		}
+	}
+
+	return false;
+}
+
+bool AOBEnemy::IsPatrolCandidateClear(const FVector& Candidate) const
+{
+	if (!GetWorld() || FVector::DistSquared2D(GetActorLocation(), Candidate) <= FMath::Square(PatrolAcceptanceRadius))
+	{
+		return false;
+	}
+
+	if (UNavigationSystemV1* NavSystem = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld()))
+	{
+		UNavigationPath* Path = NavSystem->FindPathToLocationSynchronously(GetWorld(), GetActorLocation(), Candidate, const_cast<AOBEnemy*>(this));
+		return Path && Path->IsValid() && !Path->IsPartial() && Path->PathPoints.Num() > 1;
 	}
 
 	return false;
@@ -515,11 +551,36 @@ bool AOBEnemy::MoveToCurrentTarget(float AcceptanceRadius, bool bAllowDirectFall
 	return bUsingDirectMovementFallback;
 }
 
+bool AOBEnemy::RebuildPatrolPath()
+{
+	CurrentPatrolPath.Reset();
+	CurrentPatrolPathIndex = 0;
+
+	if (!bHasPatrolTarget || !GetWorld())
+	{
+		return false;
+	}
+
+	if (UNavigationSystemV1* NavSystem = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld()))
+	{
+		UNavigationPath* Path = NavSystem->FindPathToLocationSynchronously(GetWorld(), GetActorLocation(), CurrentPatrolTarget, this);
+		if (Path && Path->IsValid() && !Path->IsPartial() && Path->PathPoints.Num() > 1)
+		{
+			CurrentPatrolPath = Path->PathPoints;
+			CurrentPatrolPathIndex = 1;
+			return true;
+		}
+	}
+
+	return false;
+}
+
 void AOBEnemy::UpdatePatrolMovement(float DeltaSeconds)
 {
 	if (!bHasPatrolTarget)
 	{
 		ChooseNewPatrolTarget();
+		return;
 	}
 
 	const float DistanceToTargetSquared = FVector::DistSquared2D(GetActorLocation(), CurrentPatrolTarget);
@@ -549,32 +610,56 @@ void AOBEnemy::UpdatePatrolMovement(float DeltaSeconds)
 		PatrolStuckTime = 0.0f;
 	}
 
-	FVector SteeringTarget = CurrentPatrolTarget;
-	TryGetPatrolSteeringTarget(SteeringTarget);
-
-	const FVector DirectionToTarget = CalculatePatrolMovementDirection((SteeringTarget - GetActorLocation()).GetSafeNormal2D());
-	if (!DirectionToTarget.IsNearlyZero())
+	if (CurrentPatrolPath.Num() < 2 || CurrentPatrolPathIndex <= 0 || CurrentPatrolPathIndex >= CurrentPatrolPath.Num())
 	{
-		AddMovementInput(DirectionToTarget, 1.0f, true);
-	}
-	else
-	{
-		if (AAIController* AI = Cast<AAIController>(GetController()))
+		if (!RebuildPatrolPath())
 		{
-			AI->StopMovement();
+			ChooseNewPatrolTarget();
+			return;
 		}
-		ChooseNewPatrolTarget();
 	}
+
+	while (CurrentPatrolPathIndex < CurrentPatrolPath.Num()
+		&& FVector::DistSquared2D(GetActorLocation(), CurrentPatrolPath[CurrentPatrolPathIndex]) <= FMath::Square(80.0f))
+	{
+		++CurrentPatrolPathIndex;
+	}
+
+	if (CurrentPatrolPathIndex >= CurrentPatrolPath.Num())
+	{
+		ChooseNewPatrolTarget();
+		return;
+	}
+
+	CurrentApproachTarget = CurrentPatrolPath[CurrentPatrolPathIndex];
+	const FVector MovementDirection = (CurrentApproachTarget - GetActorLocation()).GetSafeNormal2D();
+	if (MovementDirection.IsNearlyZero())
+	{
+		ChooseNewPatrolTarget();
+		return;
+	}
+
+	AddMovementInput(MovementDirection, 1.0f, true);
 }
 
 void AOBEnemy::ChooseNewPatrolTarget()
 {
 	bHasPatrolTarget = false;
+	CurrentPatrolPath.Reset();
+	CurrentPatrolPathIndex = 0;
 	CurrentApproachTarget = GetOrChoosePatrolTarget();
 	if (FVector::DistSquared2D(GetActorLocation(), CurrentApproachTarget) <= FMath::Square(PatrolAcceptanceRadius))
 	{
 		bHasPatrolTarget = false;
+		CurrentPatrolPath.Reset();
+		CurrentPatrolPathIndex = 0;
 		CurrentApproachTarget = GetOrChoosePatrolTarget();
+	}
+	if (!RebuildPatrolPath())
+	{
+		bHasPatrolTarget = false;
+		CurrentPatrolPath.Reset();
+		CurrentPatrolPathIndex = 0;
 	}
 }
 
