@@ -1,4 +1,4 @@
-
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31314.256
@@ -16,6 +16,8 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Shared", "Shared", "{57713676-9DBE-331C-AD10-26632AC9EE0C}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "UnrealBuildTool.Plugins", "UnrealBuildTool.Plugins", "{7B5CFB44-F0FB-31DF-AE62-C3C096A29A7B}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "OneBulletLeft", "Intermediate\ProjectFiles\OneBulletLeft.vcxproj", "{983D0072-0CEB-34AE-B789-CB00C4F13DAB}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MarketplaceRules", "C:\Program Files\Epic Games\UE_5.7\Engine\Intermediate\Build\BuildRulesProjects\MarketplaceRules\MarketplaceRules.csproj", "{436A8ABF-8AFA-3884-9530-30A86F73E095}"
 EndProject
@@ -120,8 +122,6 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnrealBuildTool", "C:\Program Files\Epic Games\UE_5.7\Engine\Source\Programs\UnrealBuildTool\UnrealBuildTool.csproj", "{2C6AA198-F16F-3522-9549-25F151E6FB32}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OneBulletLeftModuleRules", "Intermediate\Build\BuildRulesProjects\OneBulletLeftModuleRules\OneBulletLeftModuleRules.csproj", "{554D177A-4E74-3487-9F48-BC3A09A36108}"
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "OneBulletLeft", "Intermediate\ProjectFiles\OneBulletLeft.vcxproj", "{983D0072-0CEB-34AE-B789-CB00C4F13DAB}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "UE5", "Intermediate\ProjectFiles\UE5.vcxproj", "{A669775E-D83A-329D-9C3C-C4D2D0C5B270}"
 EndProject

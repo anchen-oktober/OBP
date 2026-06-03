@@ -134,16 +134,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(EditCondition="bUseSimpleLocomotionAnimations", ClampMin="0.0"))
 	float RunAnimationMinSpeed = 10.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
-	float DodgeDistance = 420.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge", meta=(ClampMin="100.0", UIMin="300.0", UIMax="1400.0"))
+	float DodgeDistance = 950.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
-	float DodgeDuration = 0.18f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge", meta=(ClampMin="0.03", UIMin="0.05", UIMax="0.30"))
+	float DodgeDuration = 0.10f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge", meta=(ClampMin="0.0", UIMin="0.0", UIMax="3.0"))
 	float DodgeCooldown = 1.15f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge", meta=(ClampMin="0.0", UIMin="0.0", UIMax="400.0"))
 	float DodgeEnemyClearance = 180.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Dodge")
@@ -168,7 +168,7 @@ public:
 	FTransform WeaponReadyRelativeTransform = FTransform::Identity;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon", meta=(EditCondition="bAttachWeaponToCamera"))
-	FTransform CameraWeaponRelativeTransform = FTransform(FRotator(0.0f, -93.0f, 0.0f), FVector(44.0f, 18.0f, -18.0f), FVector(0.68f));
+	FTransform CameraWeaponRelativeTransform = FTransform(FRotator(0.0f, -94.0f, 0.0f), FVector(40.0f, 14.0f, -17.0f), FVector(0.72f));
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Weapon")
 	FTransform WeaponLostRelativeTransform = FTransform(FRotator(-42.0f, 0.0f, 0.0f), FVector(0.0f, 0.0f, -14.0f), FVector::OneVector);
@@ -324,6 +324,8 @@ protected:
 	bool bWeaponBulletReady = true;
 
 	FVector ActiveDodgeDirection = FVector::ZeroVector;
+	float LastMoveForwardInput = 0.0f;
+	float LastMoveRightInput = 0.0f;
 	float ActiveDodgeElapsed = 0.0f;
 	float ActiveDodgePreviousAlpha = 0.0f;
 	float RemainingRecoilPitch = 0.0f;
@@ -349,6 +351,7 @@ protected:
 	void ApplyFeelStop(float Duration);
 	void ResetFeelStop();
 	bool TryFindSafeDodgeDirection(FVector& OutDirection) const;
+	FVector GetMovementInputDodgeDirection() const;
 	bool EvaluateDodgeDirection(const FVector& Direction, float& OutScore) const;
 	void ConfigurePlayerMesh();
 	void HideFirstPersonHead();

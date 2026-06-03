@@ -304,6 +304,7 @@ void AOBEnemy::NormalizePressureSettings()
 	PlayerHasBulletSpeedMultiplier = FMath::Clamp(PlayerHasBulletSpeedMultiplier, 0.0f, 1.0f);
 	PlayerHasBulletAttackSpeedMultiplier = FMath::Clamp(PlayerHasBulletAttackSpeedMultiplier, 0.0f, 1.0f);
 	PlayerHasBulletAttackRadius = FMath::Max(PlayerHasBulletAttackRadius, 0.0f);
+	DetectionRadius = FMath::Max(DetectionRadius, 0.0f);
 	PatrolRadius = FMath::Max(PatrolRadius, 2600.0f);
 	PatrolPointJitter = FMath::Max(PatrolPointJitter, 0.0f);
 	PatrolMinTargetDistance = FMath::Clamp(PatrolMinTargetDistance, PatrolAcceptanceRadius, PatrolRadius * 0.75f);
@@ -338,6 +339,13 @@ bool AOBEnemy::IsPlayerInsideBulletAttackRadius() const
 		&& FVector::DistSquared2D(GetActorLocation(), PlayerTarget->GetActorLocation()) <= FMath::Square(PlayerHasBulletAttackRadius);
 }
 
+bool AOBEnemy::IsPlayerDetected() const
+{
+	return PlayerTarget
+		&& DetectionRadius > 0.0f
+		&& FVector::DistSquared2D(GetActorLocation(), PlayerTarget->GetActorLocation()) <= FMath::Square(DetectionRadius);
+}
+
 bool AOBEnemy::ShouldPatrolWhilePlayerHasBullet() const
 {
 	if (!PlayerTarget || !IsPlayerHoldingBullet())
@@ -345,7 +353,7 @@ bool AOBEnemy::ShouldPatrolWhilePlayerHasBullet() const
 		return false;
 	}
 
-	return !IsPlayerInsideBulletAttackRadius();
+	return !IsPlayerDetected();
 }
 
 FVector AOBEnemy::GetOrChoosePatrolTarget()
@@ -832,6 +840,10 @@ FVector AOBEnemy::CalculateApproachTarget() const
 void AOBEnemy::TryTouchKill()
 {
 	if (bDead || !PlayerTarget || PlayerTarget->IsDead())
+	{
+		return;
+	}
+	if (!IsPlayerDetected())
 	{
 		return;
 	}

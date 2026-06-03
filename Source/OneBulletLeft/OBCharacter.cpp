@@ -62,19 +62,19 @@ AOBCharacter::AOBCharacter()
 	WeaponMesh->SetupAttachment(FirstPersonCamera);
 	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-	static ConstructorHelpers::FObjectFinder<USkeletalMesh> DefaultWeapon(TEXT("/Game/MilitaryWeapDark/Weapons/Pistols_B.Pistols_B"));
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> DefaultWeapon(TEXT("/Game/Weapons/GrenadeLauncher/Meshes/SK_GrenadeLauncher.SK_GrenadeLauncher"));
 	if (DefaultWeapon.Succeeded())
 	{
 		WeaponModel = DefaultWeapon.Object;
 	}
 
-	static ConstructorHelpers::FObjectFinder<UParticleSystem> DefaultShootEffect(TEXT("/Game/MilitaryWeapDark/FX/P_Pistol_MuzzleFlash_01.P_Pistol_MuzzleFlash_01"));
+	static ConstructorHelpers::FObjectFinder<UParticleSystem> DefaultShootEffect(TEXT("/Game/MilitaryWeapDark/FX/P_Grenade_MuzzleFlash_01.P_Grenade_MuzzleFlash_01"));
 	if (DefaultShootEffect.Succeeded())
 	{
 		ShootEffect = DefaultShootEffect.Object;
 	}
 
-	static ConstructorHelpers::FObjectFinder<USoundBase> DefaultShootSound(TEXT("/Game/MilitaryWeapDark/Sound/Pistol/PistolB_Fire_Cue.PistolB_Fire_Cue"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> DefaultShootSound(TEXT("/Game/Weapons/GrenadeLauncher/Audio/FirstPersonTemplateWeaponFire02.FirstPersonTemplateWeaponFire02"));
 	if (DefaultShootSound.Succeeded())
 	{
 		ShootSound = DefaultShootSound.Object;
@@ -90,12 +90,6 @@ AOBCharacter::AOBCharacter()
 	if (DefaultBulletImpactEffect.Succeeded())
 	{
 		BulletImpactEffect = DefaultBulletImpactEffect.Object;
-	}
-
-	static ConstructorHelpers::FObjectFinder<UAnimSequence> DefaultWeaponShootAnimation(TEXT("/Game/MilitaryWeapDark/Weapons/Anims/Fire_Pistol_W.Fire_Pistol_W"));
-	if (DefaultWeaponShootAnimation.Succeeded())
-	{
-		WeaponShootAnimation = DefaultWeaponShootAnimation.Object;
 	}
 
 	ConfigurePlayerMesh();
@@ -170,6 +164,8 @@ void AOBCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 
 void AOBCharacter::MoveForward(float Value)
 {
+	LastMoveForwardInput = Value;
+
 	if (!bDead && Controller && FMath::Abs(Value) > KINDA_SMALL_NUMBER)
 	{
 		AddMovementInput(GetActorForwardVector(), Value);
@@ -178,6 +174,8 @@ void AOBCharacter::MoveForward(float Value)
 
 void AOBCharacter::MoveRight(float Value)
 {
+	LastMoveRightInput = Value;
+
 	if (!bDead && Controller && FMath::Abs(Value) > KINDA_SMALL_NUMBER)
 	{
 		AddMovementInput(GetActorRightVector(), Value);
@@ -573,38 +571,57 @@ void AOBCharacter::UpdateDodge(float DeltaSeconds)
 
 bool AOBCharacter::TryFindSafeDodgeDirection(FVector& OutDirection) const
 {
-	TArray<FVector> Candidates;
+	const FVector MovementDirection = GetMovementInputDodgeDirection();
+	if (MovementDirection.IsNearlyZero())
+	{
+		OutDirection = GetActorForwardVector().GetSafeNormal2D();
+		return !OutDirection.IsNearlyZero();
+	}
+
+	OutDirection = MovementDirection;
+	return true;
+}
+
+FVector AOBCharacter::GetMovementInputDodgeDirection() const
+{
 	const FVector Forward = GetActorForwardVector().GetSafeNormal2D();
 	const FVector Right = GetActorRightVector().GetSafeNormal2D();
-	const FVector MovementDirection = GetLastMovementInputVector().GetSafeNormal2D();
+	float ForwardInput = LastMoveForwardInput;
+	float RightInput = LastMoveRightInput;
 
-	if (bPreferMovementDirectionDodge && !MovementDirection.IsNearlyZero())
+	if (const APlayerController* PlayerController = Cast<APlayerController>(Controller))
 	{
-		Candidates.Add(MovementDirection);
-	}
+		float DigitalForwardInput = 0.0f;
+		float DigitalRightInput = 0.0f;
 
-	Candidates.Add(Right);
-	Candidates.Add(-Right);
-	Candidates.Add(-Forward);
-	Candidates.Add(Forward);
-
-	float BestScore = -1.0f;
-	for (const FVector& Candidate : Candidates)
-	{
-		if (Candidate.IsNearlyZero())
+		if (PlayerController->IsInputKeyDown(EKeys::W) || PlayerController->IsInputKeyDown(EKeys::Up))
 		{
-			continue;
+			DigitalForwardInput += 1.0f;
+		}
+		if (PlayerController->IsInputKeyDown(EKeys::S) || PlayerController->IsInputKeyDown(EKeys::Down))
+		{
+			DigitalForwardInput -= 1.0f;
+		}
+		if (PlayerController->IsInputKeyDown(EKeys::D) || PlayerController->IsInputKeyDown(EKeys::Right))
+		{
+			DigitalRightInput += 1.0f;
+		}
+		if (PlayerController->IsInputKeyDown(EKeys::A) || PlayerController->IsInputKeyDown(EKeys::Left))
+		{
+			DigitalRightInput -= 1.0f;
 		}
 
-		float CandidateScore = 0.0f;
-		if (EvaluateDodgeDirection(Candidate.GetSafeNormal2D(), CandidateScore) && CandidateScore > BestScore)
+		if (FMath::Abs(DigitalForwardInput) > KINDA_SMALL_NUMBER)
 		{
-			BestScore = CandidateScore;
-			OutDirection = Candidate.GetSafeNormal2D();
+			ForwardInput = DigitalForwardInput;
+		}
+		if (FMath::Abs(DigitalRightInput) > KINDA_SMALL_NUMBER)
+		{
+			RightInput = DigitalRightInput;
 		}
 	}
 
-	return BestScore >= 0.0f;
+	return (Forward * ForwardInput + Right * RightInput).GetSafeNormal2D();
 }
 
 bool AOBCharacter::EvaluateDodgeDirection(const FVector& Direction, float& OutScore) const
@@ -650,9 +667,7 @@ bool AOBCharacter::EvaluateDodgeDirection(const FVector& Direction, float& OutSc
 		ClosestEnemyDistance = FMath::Min(ClosestEnemyDistance, EndDistance);
 	}
 
-	const FVector PreferredDirection = GetLastMovementInputVector().GetSafeNormal2D();
-	const float MovementBonus = (!PreferredDirection.IsNearlyZero()) ? FMath::Max(0.0f, FVector::DotProduct(Direction, PreferredDirection)) * 250.0f : 0.0f;
-	OutScore = ClosestEnemyDistance + MovementBonus;
+	OutScore = ClosestEnemyDistance;
 	return true;
 }
 

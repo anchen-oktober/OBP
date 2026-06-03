@@ -43,6 +43,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0", DisplayName="Player Has Bullet Attack Radius"))
 	float PlayerHasBulletAttackRadius = 700.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Detection", meta=(ClampMin="0.0", Units="cm"))
+	float DetectionRadius = 2200.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0"))
 	float PatrolRadius = 2600.0f;
 
@@ -214,6 +217,7 @@ protected:
 	void ApplyBulletPressureSpeed();
 	bool IsPlayerHoldingBullet() const;
 	bool IsPlayerInsideBulletAttackRadius() const;
+	bool IsPlayerDetected() const;
 	bool ShouldPatrolWhilePlayerHasBullet() const;
 	FVector GetOrChoosePatrolTarget();
 	FVector ChooseWholeArenaPatrolTarget() const;
