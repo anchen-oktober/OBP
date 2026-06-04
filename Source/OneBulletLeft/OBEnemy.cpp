@@ -7,6 +7,8 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "DrawDebugHelpers.h"
+#include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "Kismet/GameplayStatics.h"
@@ -25,6 +27,9 @@ bool IsAnimationCompatibleWithMesh(const UAnimationAsset* Animation, const USkel
 	const USkeletalMesh* SkeletalMesh = MeshComponent ? MeshComponent->GetSkeletalMeshAsset() : nullptr;
 	return !Animation || !SkeletalMesh || !Animation->GetSkeleton() || Animation->GetSkeleton() == SkeletalMesh->GetSkeleton();
 }
+
+bool bShowEnemyDetectionRadii = false;
+TWeakObjectPtr<UWorld> DetectionVisualizationWorld;
 }
 
 AOBEnemy::AOBEnemy()
@@ -68,6 +73,12 @@ void AOBEnemy::BeginPlay()
 	{
 		SpawnDefaultController();
 	}
+	UWorld* World = GetWorld();
+	if (World && DetectionVisualizationWorld.Get() != World)
+	{
+		DetectionVisualizationWorld = World;
+		bShowEnemyDetectionRadii = false;
+	}
 	NormalizePressureSettings();
 	Configure(EnemyType);
 	PlayerTarget = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0));
@@ -77,6 +88,21 @@ void AOBEnemy::BeginPlay()
 	bWasHoldingBullet = IsPlayerHoldingBullet();
 	ApplyBulletPressureSpeed();
 	GetWorldTimerManager().SetTimer(MoveTimerHandle, this, &AOBEnemy::RequestMove, 0.35f, true, 0.05f);
+}
+
+bool AOBEnemy::IsDetectionRadiusVisualizationEnabled()
+{
+	return bShowEnemyDetectionRadii;
+}
+
+void AOBEnemy::SetDetectionRadiusVisualizationEnabled(bool bEnabled)
+{
+	bShowEnemyDetectionRadii = bEnabled;
+}
+
+void AOBEnemy::ToggleDetectionRadiusVisualization()
+{
+	bShowEnemyDetectionRadii = !bShowEnemyDetectionRadii;
 }
 
 void AOBEnemy::Tick(float DeltaSeconds)
@@ -116,6 +142,7 @@ void AOBEnemy::Tick(float DeltaSeconds)
 	}
 
 	bStoppedForPlayerDeath = false;
+	UpdateKickKnockback(DeltaSeconds);
 	if (!bStunned && PlayerTarget)
 	{
 		if (bHoldingBullet && ShouldPatrolWhilePlayerHasBullet())
@@ -157,6 +184,7 @@ void AOBEnemy::Tick(float DeltaSeconds)
 	}
 	UpdateSimpleLocomotionAnimation();
 	TryTouchKill();
+	DrawDetectionRadiusDebug();
 }
 
 void AOBEnemy::Configure(EOBEnemyType NewType)
@@ -239,18 +267,11 @@ void AOBEnemy::ApplyKick(const FVector& Direction)
 	OnEnemyKicked(LaunchDirection, EnemyType);
 	if (EnemyType == EOBEnemyType::Fast)
 	{
-		LaunchCharacter(LaunchDirection * 1400.0f + FVector(0.0f, 0.0f, 220.0f), true, true);
+		BeginKickKnockback(LaunchDirection, 560.0f, 0.26f, 0.35f);
 	}
 	else
 	{
-		LaunchCharacter(LaunchDirection * 220.0f, true, false);
-		bStunned = true;
-		GetCharacterMovement()->StopMovementImmediately();
-		if (AAIController* AI = Cast<AAIController>(GetController()))
-		{
-			AI->StopMovement();
-		}
-		GetWorldTimerManager().SetTimer(StunTimerHandle, this, &AOBEnemy::ResumeAfterStun, 1.0f, false);
+		BeginKickKnockback(LaunchDirection, 360.0f, 0.30f, 1.0f);
 	}
 }
 
@@ -280,6 +301,58 @@ void AOBEnemy::ResumeAfterStun()
 {
 	bStunned = false;
 	RequestMove();
+}
+
+void AOBEnemy::BeginKickKnockback(const FVector& Direction, float Distance, float Duration, float StunDuration)
+{
+	ActiveKickKnockbackDirection = Direction.GetSafeNormal2D();
+	if (ActiveKickKnockbackDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	bStunned = true;
+	bKickKnockbackActive = true;
+	ActiveKickKnockbackElapsed = 0.0f;
+	ActiveKickKnockbackPreviousAlpha = 0.0f;
+	ActiveKickKnockbackDistance = FMath::Max(0.0f, Distance);
+	ActiveKickKnockbackDuration = FMath::Max(0.01f, Duration);
+	GetCharacterMovement()->StopMovementImmediately();
+	if (AAIController* AI = Cast<AAIController>(GetController()))
+	{
+		AI->StopMovement();
+	}
+	GetWorldTimerManager().SetTimer(StunTimerHandle, this, &AOBEnemy::ResumeAfterStun, FMath::Max(StunDuration, ActiveKickKnockbackDuration), false);
+}
+
+void AOBEnemy::UpdateKickKnockback(float DeltaSeconds)
+{
+	if (!bKickKnockbackActive)
+	{
+		return;
+	}
+
+	ActiveKickKnockbackElapsed += DeltaSeconds;
+	const float RawAlpha = FMath::Clamp(ActiveKickKnockbackElapsed / ActiveKickKnockbackDuration, 0.0f, 1.0f);
+	const float SmoothedAlpha = RawAlpha * RawAlpha * (3.0f - 2.0f * RawAlpha);
+	const float AlphaStep = SmoothedAlpha - ActiveKickKnockbackPreviousAlpha;
+	ActiveKickKnockbackPreviousAlpha = SmoothedAlpha;
+
+	const float PreviousZ = GetActorLocation().Z;
+	FHitResult Hit;
+	AddActorWorldOffset(ActiveKickKnockbackDirection * ActiveKickKnockbackDistance * AlphaStep, true, &Hit);
+	const FVector NewLocation = GetActorLocation();
+	if (!FMath::IsNearlyEqual(NewLocation.Z, PreviousZ, 0.1f))
+	{
+		SetActorLocation(FVector(NewLocation.X, NewLocation.Y, PreviousZ), false);
+	}
+	if (RawAlpha >= 1.0f || Hit.bBlockingHit)
+	{
+		bKickKnockbackActive = false;
+		ActiveKickKnockbackDirection = FVector::ZeroVector;
+		ActiveKickKnockbackElapsed = 0.0f;
+		ActiveKickKnockbackPreviousAlpha = 0.0f;
+	}
 }
 
 void AOBEnemy::StopPursuitForPlayerDeath()
@@ -835,6 +908,21 @@ FVector AOBEnemy::CalculateApproachTarget() const
 	FVector ApproachTarget = PlayerTarget->GetActorLocation() + SlotDirection * TargetRadius;
 	ProjectPointToNavigation(ApproachTarget);
 	return ApproachTarget;
+}
+
+void AOBEnemy::DrawDetectionRadiusDebug() const
+{
+	if (!bShowEnemyDetectionRadii || bDead || DetectionRadius <= 0.0f || !GetWorld())
+	{
+		return;
+	}
+
+	const FVector Center = GetActorLocation() + FVector(0.0f, 0.0f, 8.0f);
+	const FColor RadiusColor = EnemyType == EOBEnemyType::Heavy
+		? FColor(255, 96, 64)
+		: FColor(64, 180, 255);
+	DrawDebugCircle(GetWorld(), Center, DetectionRadius, 96, RadiusColor, false, 0.0f, 0, 3.0f, FVector::ForwardVector, FVector::RightVector, false);
+	DrawDebugPoint(GetWorld(), Center, 9.0f, RadiusColor, false, 0.0f, 0);
 }
 
 void AOBEnemy::TryTouchKill()

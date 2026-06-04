@@ -344,6 +344,7 @@ protected:
 	void LookYaw(float Value);
 	void LookPitch(float Value);
 	void RestartLevel();
+	void ToggleEnemyDetectionRadiusVisualization();
 	void ResetKick();
 	void ResetDodge();
 	void UpdateDodge(float DeltaSeconds);

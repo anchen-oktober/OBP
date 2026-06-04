@@ -160,6 +160,7 @@ void AOBCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	}
 	PlayerInputComponent->BindKey(EKeys::One, IE_Pressed, this, &AOBCharacter::ToggleViewMode);
 	PlayerInputComponent->BindKey(EKeys::Two, IE_Pressed, this, &AOBCharacter::ToggleImmortalMode);
+	PlayerInputComponent->BindKey(EKeys::Three, IE_Pressed, this, &AOBCharacter::ToggleEnemyDetectionRadiusVisualization);
 }
 
 void AOBCharacter::MoveForward(float Value)
@@ -423,6 +424,11 @@ void AOBCharacter::ToggleImmortalMode()
 {
 	bImmortalMode = !bImmortalMode;
 	OnPlayerImmortalModeChanged(bImmortalMode);
+}
+
+void AOBCharacter::ToggleEnemyDetectionRadiusVisualization()
+{
+	AOBEnemy::ToggleDetectionRadiusVisualization();
 }
 
 void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& SpawnRotation)

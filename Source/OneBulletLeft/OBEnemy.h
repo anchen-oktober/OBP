@@ -25,6 +25,10 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 
+	static bool IsDetectionRadiusVisualizationEnabled();
+	static void SetDetectionRadiusVisualizationEnabled(bool bEnabled);
+	static void ToggleDetectionRadiusVisualization();
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings")
 	EOBEnemyType EnemyType = EOBEnemyType::Fast;
 
@@ -43,7 +47,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0", DisplayName="Player Has Bullet Attack Radius"))
 	float PlayerHasBulletAttackRadius = 700.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Detection", meta=(ClampMin="0.0", Units="cm"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Detection", meta=(ClampMin="0.0"))
 	float DetectionRadius = 2200.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0"))
@@ -198,19 +202,27 @@ protected:
 	bool bMovingToPatrolTarget = false;
 	bool bHasPatrolTarget = false;
 	bool bWasHoldingBullet = true;
+	bool bKickKnockbackActive = false;
 	FVector PatrolOrigin = FVector::ZeroVector;
 	FVector CurrentPatrolTarget = FVector::ZeroVector;
 	FVector CurrentApproachTarget = FVector::ZeroVector;
 	FVector LastPatrolLocation = FVector::ZeroVector;
+	FVector ActiveKickKnockbackDirection = FVector::ZeroVector;
 	TArray<FVector> CurrentPatrolPath;
 	int32 CurrentPatrolPathIndex = 0;
 	float PatrolStuckTime = 0.0f;
+	float ActiveKickKnockbackElapsed = 0.0f;
+	float ActiveKickKnockbackDuration = 0.0f;
+	float ActiveKickKnockbackDistance = 0.0f;
+	float ActiveKickKnockbackPreviousAlpha = 0.0f;
 	UAnimationAsset* ActiveLocomotionAnimation = nullptr;
 
 	FTimerHandle StunTimerHandle;
 	FTimerHandle MoveTimerHandle;
 
 	void ResumeAfterStun();
+	void BeginKickKnockback(const FVector& Direction, float Distance, float Duration, float StunDuration);
+	void UpdateKickKnockback(float DeltaSeconds);
 	void RequestMove();
 	void StopPursuitForPlayerDeath();
 	void NormalizePressureSettings();
@@ -233,5 +245,6 @@ protected:
 	void ApplyDirectLostBulletChase();
 	void UpdateSimpleLocomotionAnimation();
 	FVector CalculateApproachTarget() const;
+	void DrawDetectionRadiusDebug() const;
 	void TryTouchKill();
 };
