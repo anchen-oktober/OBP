@@ -20,6 +20,8 @@
 #include "OBGameMode.h"
 #include "OBGameState.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogOBEnemyAI, Log, All);
+
 namespace
 {
 bool IsAnimationCompatibleWithMesh(const UAnimationAsset* Animation, const USkeletalMeshComponent* MeshComponent)
@@ -86,7 +88,7 @@ void AOBEnemy::BeginPlay()
 	PatrolOrigin.Z = GetActorLocation().Z;
 	LastPatrolLocation = PatrolOrigin;
 	bWasHoldingBullet = IsPlayerHoldingBullet();
-	ApplyBulletPressureSpeed();
+	SetAIState(bWasHoldingBullet ? EOBEnemyAIState::Cautious : EOBEnemyAIState::Rush, true);
 	GetWorldTimerManager().SetTimer(MoveTimerHandle, this, &AOBEnemy::RequestMove, 0.35f, true, 0.05f);
 }
 
@@ -117,22 +119,8 @@ void AOBEnemy::Tick(float DeltaSeconds)
 		return;
 	}
 
-	ApplyBulletPressureSpeed();
-	const bool bHoldingBullet = IsPlayerHoldingBullet();
-	if (bWasHoldingBullet != bHoldingBullet)
-	{
-		bWasHoldingBullet = bHoldingBullet;
-		bUsingDirectMovementFallback = false;
-		bMovingToPatrolTarget = false;
-		bHasPatrolTarget = false;
-		CurrentPatrolPath.Reset();
-		CurrentPatrolPathIndex = 0;
-		if (AAIController* AI = Cast<AAIController>(GetController()))
-		{
-			AI->StopMovement();
-		}
-		RequestMove();
-	}
+	CurrentStateElapsed += DeltaSeconds;
+	RefreshAIStateFromBullet();
 
 	if (PlayerTarget && PlayerTarget->IsDead())
 	{
@@ -145,28 +133,7 @@ void AOBEnemy::Tick(float DeltaSeconds)
 	UpdateKickKnockback(DeltaSeconds);
 	if (!bStunned && PlayerTarget)
 	{
-		if (bHoldingBullet && ShouldPatrolWhilePlayerHasBullet())
-		{
-			bMovingToPatrolTarget = true;
-			bUsingDirectMovementFallback = false;
-			if (!bHasPatrolTarget)
-			{
-				ChooseNewPatrolTarget();
-			}
-			UpdatePatrolMovement(DeltaSeconds);
-		}
-		else if (bHoldingBullet)
-		{
-			bMovingToPatrolTarget = false;
-			bHasPatrolTarget = false;
-			CurrentApproachTarget = PlayerTarget->GetActorLocation();
-			MoveToCurrentTarget(55.0f, false, true);
-		}
-		else if (!bHoldingBullet && bUseDirectLostBulletChase)
-		{
-			MoveAggressivelyToPlayer();
-		}
-		else if (bUsingDirectMovementFallback)
+		if (bUsingDirectMovementFallback)
 		{
 			const FVector MovementDirection = (CurrentApproachTarget - GetActorLocation()).GetSafeNormal2D();
 			if (!MovementDirection.IsNearlyZero())
@@ -175,7 +142,9 @@ void AOBEnemy::Tick(float DeltaSeconds)
 			}
 		}
 
-		const FVector FacingTarget = bMovingToPatrolTarget ? CurrentApproachTarget : PlayerTarget->GetActorLocation();
+		const FVector FacingTarget = CurrentApproachTarget.IsNearlyZero()
+			? PlayerTarget->GetActorLocation()
+			: CurrentApproachTarget;
 		const FVector FacingDirection = (FacingTarget - GetActorLocation()).GetSafeNormal2D();
 		if (!FacingDirection.IsNearlyZero())
 		{
@@ -204,7 +173,7 @@ void AOBEnemy::Configure(EOBEnemyType NewType)
 		GetMesh()->SetRelativeScale3D(FVector(1.25f, 1.25f, 1.25f));
 	}
 
-	ApplyBulletPressureSpeed();
+	ApplyAIStateSpeed();
 }
 
 void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
@@ -216,6 +185,7 @@ void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
 
 	bDead = true;
 	GetWorldTimerManager().ClearTimer(MoveTimerHandle);
+	GetWorldTimerManager().ClearTimer(RushTransitionTimerHandle);
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetCharacterMovement()->StopMovementImmediately();
 	GetCharacterMovement()->DisableMovement();
@@ -385,19 +355,325 @@ void AOBEnemy::NormalizePressureSettings()
 	PatrolPerimeterStepDegrees = FMath::Clamp(PatrolPerimeterStepDegrees, 5.0f, 180.0f);
 	PatrolObstacleProbeDistance = FMath::Max(PatrolObstacleProbeDistance, 0.0f);
 	PatrolObstacleProbeRadius = FMath::Max(PatrolObstacleProbeRadius, 0.0f);
+
+	RushTransitionDelayMin = FMath::Max(RushTransitionDelayMin, 0.0f);
+	RushTransitionDelayMax = FMath::Max(RushTransitionDelayMax, RushTransitionDelayMin);
+	CautiousChaserChance = FMath::Clamp(CautiousChaserChance, 0.0f, 1.0f);
+	CautiousFlankerChance = FMath::Clamp(CautiousFlankerChance, 0.0f, 1.0f);
+	CautiousSpeedMultiplierMin = FMath::Max(CautiousSpeedMultiplierMin, 0.0f);
+	CautiousSpeedMultiplierMax = FMath::Max(CautiousSpeedMultiplierMax, CautiousSpeedMultiplierMin);
+	CautiousSpeedRandomVariance = FMath::Clamp(CautiousSpeedRandomVariance, 0.0f, 0.5f);
+	CautiousFlankerDistance = FMath::Max(CautiousFlankerDistance, 0.0f);
+	CautiousFlankerMinDistance = FMath::Clamp(CautiousFlankerMinDistance, 0.0f, CautiousFlankerDistance);
+	CautiousCompressionSpeed = FMath::Max(CautiousCompressionSpeed, 0.0f);
+	RushChaserChance = FMath::Clamp(RushChaserChance, 0.0f, 1.0f);
+	RushFlankerChance = FMath::Clamp(RushFlankerChance, 0.0f, 1.0f);
+	RushBulletBlockerChance = FMath::Clamp(RushBulletBlockerChance, 0.0f, 1.0f);
+	RushSpeedMultiplierMin = FMath::Max(RushSpeedMultiplierMin, 0.0f);
+	RushSpeedMultiplierMax = FMath::Max(RushSpeedMultiplierMax, RushSpeedMultiplierMin);
+	RushSpeedRandomVariance = FMath::Clamp(RushSpeedRandomVariance, 0.0f, 0.5f);
+	RushFlankerDistance = FMath::Max(RushFlankerDistance, 0.0f);
+	BulletBlockerAcceptanceRadius = FMath::Max(BulletBlockerAcceptanceRadius, 0.0f);
+	BulletBlockerPathFraction = FMath::Clamp(BulletBlockerPathFraction, 0.05f, 0.95f);
 }
 
-void AOBEnemy::ApplyBulletPressureSpeed()
+void AOBEnemy::RefreshAIStateFromBullet()
+{
+	const bool bHoldingBullet = IsPlayerHoldingBullet();
+	if (bWasHoldingBullet == bHoldingBullet)
+	{
+		return;
+	}
+
+	bWasHoldingBullet = bHoldingBullet;
+	if (bHoldingBullet)
+	{
+		bRushTransitionPending = false;
+		GetWorldTimerManager().ClearTimer(RushTransitionTimerHandle);
+		SetAIState(EOBEnemyAIState::Cautious);
+	}
+	else
+	{
+		ScheduleRushTransition();
+	}
+}
+
+void AOBEnemy::ScheduleRushTransition()
+{
+	if (bRushTransitionPending || CurrentAIState == EOBEnemyAIState::Rush || bDead)
+	{
+		return;
+	}
+
+	bRushTransitionPending = true;
+	const float Delay = FMath::FRandRange(RushTransitionDelayMin, RushTransitionDelayMax);
+	UE_LOG(
+		LogOBEnemyAI,
+		Log,
+		TEXT("%s scheduling Cautious -> Rush in %.2fs"),
+		*GetName(),
+		Delay);
+
+	if (Delay <= KINDA_SMALL_NUMBER)
+	{
+		CompleteRushTransition();
+		return;
+	}
+
+	GetWorldTimerManager().SetTimer(RushTransitionTimerHandle, this, &AOBEnemy::CompleteRushTransition, Delay, false);
+}
+
+void AOBEnemy::CompleteRushTransition()
+{
+	bRushTransitionPending = false;
+	if (!bDead && !IsPlayerHoldingBullet())
+	{
+		SetAIState(EOBEnemyAIState::Rush);
+	}
+}
+
+void AOBEnemy::SetAIState(EOBEnemyAIState NewState, bool bForceRefresh)
+{
+	if (!bForceRefresh && CurrentAIState == NewState)
+	{
+		return;
+	}
+
+	const EOBEnemyAIState PreviousState = CurrentAIState;
+	CurrentAIState = NewState;
+	CurrentStateElapsed = 0.0f;
+	bRushTransitionPending = false;
+	GetWorldTimerManager().ClearTimer(RushTransitionTimerHandle);
+	AssignRoleForCurrentState();
+
+	const float SpeedMin = CurrentAIState == EOBEnemyAIState::Cautious
+		? CautiousSpeedMultiplierMin
+		: RushSpeedMultiplierMin;
+	const float SpeedMax = CurrentAIState == EOBEnemyAIState::Cautious
+		? CautiousSpeedMultiplierMax
+		: RushSpeedMultiplierMax;
+	const float Variance = CurrentAIState == EOBEnemyAIState::Cautious
+		? CautiousSpeedRandomVariance
+		: RushSpeedRandomVariance;
+	const float BaseMultiplier = FMath::FRandRange(SpeedMin, SpeedMax);
+	CurrentStateSpeedMultiplier = BaseMultiplier * FMath::FRandRange(1.0f - Variance, 1.0f + Variance);
+
+	ApplyAIStateSpeed();
+	ActiveLocomotionAnimation = nullptr;
+	ActiveLocomotionPlayRate = -1.0f;
+	ResetMovementForStateChange();
+
+	UE_LOG(
+		LogOBEnemyAI,
+		Log,
+		TEXT("%s AI state %s -> %s, role=%s, speed=%.2fx"),
+		*GetName(),
+		GetAIStateName(PreviousState),
+		GetAIStateName(CurrentAIState),
+		GetAIRoleName(CurrentRole),
+		CurrentStateSpeedMultiplier);
+	OnEnemyAIStateChanged(CurrentAIState, CurrentRole);
+}
+
+void AOBEnemy::AssignRoleForCurrentState()
+{
+	if (CurrentAIState == EOBEnemyAIState::Cautious)
+	{
+		const float TotalChance = CautiousChaserChance + CautiousFlankerChance;
+		const float Roll = FMath::FRandRange(0.0f, FMath::Max(TotalChance, KINDA_SMALL_NUMBER));
+		CurrentRole = Roll < CautiousChaserChance
+			? EOBEnemyRole::Chaser
+			: EOBEnemyRole::Flanker;
+		if (CurrentRole == EOBEnemyRole::Flanker)
+		{
+			switch (GetUniqueID() % 3)
+			{
+			case 0:
+				FlankerSlotAngleDegrees = -90.0f;
+				break;
+			case 1:
+				FlankerSlotAngleDegrees = 90.0f;
+				break;
+			default:
+				FlankerSlotAngleDegrees = 180.0f;
+				break;
+			}
+		}
+		return;
+	}
+
+	const float TotalChance = RushChaserChance + RushFlankerChance + RushBulletBlockerChance;
+	const float Roll = FMath::FRandRange(0.0f, FMath::Max(TotalChance, KINDA_SMALL_NUMBER));
+	if (Roll < RushChaserChance)
+	{
+		CurrentRole = EOBEnemyRole::Chaser;
+	}
+	else if (Roll < RushChaserChance + RushFlankerChance)
+	{
+		CurrentRole = EOBEnemyRole::Flanker;
+		FlankerSlotAngleDegrees = (GetUniqueID() % 2 == 0) ? -90.0f : 90.0f;
+	}
+	else
+	{
+		CurrentRole = EOBEnemyRole::BulletBlocker;
+		FlankerSlotAngleDegrees = (GetUniqueID() % 2 == 0) ? -90.0f : 90.0f;
+	}
+}
+
+void AOBEnemy::ApplyAIStateSpeed()
 {
 	const float BaseSpeed = EnemyType == EOBEnemyType::Heavy ? HeavySpeed : FastSpeed;
-	float SpeedMultiplier = 1.0f;
-	if (IsPlayerHoldingBullet())
+	GetCharacterMovement()->MaxWalkSpeed = BaseSpeed * FMath::Max(CurrentStateSpeedMultiplier, 0.0f);
+}
+
+void AOBEnemy::ResetMovementForStateChange()
+{
+	bUsingDirectMovementFallback = false;
+	bMovingToPatrolTarget = false;
+	bHasPatrolTarget = false;
+	CurrentPatrolPath.Reset();
+	CurrentPatrolPathIndex = 0;
+	CurrentApproachTarget = FVector::ZeroVector;
+	if (AAIController* AI = Cast<AAIController>(GetController()))
 	{
-		SpeedMultiplier = IsPlayerInsideBulletAttackRadius()
-			? PlayerHasBulletAttackSpeedMultiplier
-			: PlayerHasBulletSpeedMultiplier;
+		AI->StopMovement();
 	}
-	GetCharacterMovement()->MaxWalkSpeed = BaseSpeed * SpeedMultiplier;
+
+	if (HasActorBegunPlay() && !bDead && !bStunned)
+	{
+		RequestMove();
+	}
+}
+
+FVector AOBEnemy::CalculateStateMovementTarget() const
+{
+	switch (CurrentAIState)
+	{
+	case EOBEnemyAIState::Cautious:
+		return CalculateCautiousTarget();
+	case EOBEnemyAIState::Rush:
+		return CalculateRushTarget();
+	default:
+		return GetActorLocation();
+	}
+}
+
+FVector AOBEnemy::CalculateCautiousTarget() const
+{
+	if (!PlayerTarget)
+	{
+		return GetActorLocation();
+	}
+
+	FVector PlayerForward = PlayerTarget->GetActorForwardVector().GetSafeNormal2D();
+	if (const AController* PlayerController = PlayerTarget->GetController())
+	{
+		PlayerForward = FRotationMatrix(FRotator(0.0f, PlayerController->GetControlRotation().Yaw, 0.0f)).GetUnitAxis(EAxis::X).GetSafeNormal2D();
+	}
+
+	if (CurrentRole == EOBEnemyRole::Chaser)
+	{
+		return PlayerTarget->GetActorLocation();
+	}
+
+	const float DesiredDistance = FMath::Max(
+		CautiousFlankerMinDistance,
+		CautiousFlankerDistance - CurrentStateElapsed * CautiousCompressionSpeed);
+	const float CurrentDistance = FVector::Dist2D(GetActorLocation(), PlayerTarget->GetActorLocation());
+	const float TargetDistance = FMath::Min(DesiredDistance, CurrentDistance);
+	const FVector SlotDirection = PlayerForward.RotateAngleAxis(FlankerSlotAngleDegrees, FVector::UpVector).GetSafeNormal2D();
+	FVector Target = PlayerTarget->GetActorLocation() + SlotDirection * TargetDistance;
+	ProjectPointToNavigation(Target);
+	return Target;
+}
+
+FVector AOBEnemy::CalculateRushTarget() const
+{
+	if (!PlayerTarget)
+	{
+		return GetActorLocation();
+	}
+
+	if (CurrentRole == EOBEnemyRole::Chaser)
+	{
+		return PlayerTarget->GetActorLocation();
+	}
+
+	if (CurrentRole == EOBEnemyRole::BulletBlocker)
+	{
+		if (const AOBBulletPickup* BulletPickup = FindActiveBulletPickup())
+		{
+			const FVector PlayerLocation = PlayerTarget->GetActorLocation();
+			const FVector BulletLocation = BulletPickup->GetActorLocation();
+			FVector BlockingTarget = FMath::Lerp(PlayerLocation, BulletLocation, BulletBlockerPathFraction);
+			ProjectPointToNavigation(BlockingTarget);
+			return BlockingTarget;
+		}
+	}
+
+	FVector PlayerForward = PlayerTarget->GetActorForwardVector().GetSafeNormal2D();
+	if (const AController* PlayerController = PlayerTarget->GetController())
+	{
+		PlayerForward = FRotationMatrix(FRotator(0.0f, PlayerController->GetControlRotation().Yaw, 0.0f)).GetUnitAxis(EAxis::X).GetSafeNormal2D();
+	}
+	const FVector FlankDirection = PlayerForward.RotateAngleAxis(FlankerSlotAngleDegrees, FVector::UpVector).GetSafeNormal2D();
+	FVector Target = PlayerTarget->GetActorLocation() + FlankDirection * RushFlankerDistance;
+	ProjectPointToNavigation(Target);
+	return Target;
+}
+
+AOBBulletPickup* AOBEnemy::FindActiveBulletPickup() const
+{
+	TArray<AActor*> PickupActors;
+	UGameplayStatics::GetAllActorsOfClass(this, AOBBulletPickup::StaticClass(), PickupActors);
+
+	AOBBulletPickup* ClosestPickup = nullptr;
+	float ClosestDistanceSquared = TNumericLimits<float>::Max();
+	const FVector ReferenceLocation = PlayerTarget ? PlayerTarget->GetActorLocation() : GetActorLocation();
+	for (AActor* Actor : PickupActors)
+	{
+		AOBBulletPickup* Pickup = Cast<AOBBulletPickup>(Actor);
+		if (!IsValid(Pickup))
+		{
+			continue;
+		}
+
+		const float DistanceSquared = FVector::DistSquared2D(ReferenceLocation, Pickup->GetActorLocation());
+		if (DistanceSquared < ClosestDistanceSquared)
+		{
+			ClosestDistanceSquared = DistanceSquared;
+			ClosestPickup = Pickup;
+		}
+	}
+	return ClosestPickup;
+}
+
+const TCHAR* AOBEnemy::GetAIStateName(EOBEnemyAIState State) const
+{
+	switch (State)
+	{
+	case EOBEnemyAIState::Cautious:
+		return TEXT("Cautious");
+	case EOBEnemyAIState::Rush:
+		return TEXT("Rush");
+	default:
+		return TEXT("Unknown");
+	}
+}
+
+const TCHAR* AOBEnemy::GetAIRoleName(EOBEnemyRole AIRole) const
+{
+	switch (AIRole)
+	{
+	case EOBEnemyRole::Chaser:
+		return TEXT("Chaser");
+	case EOBEnemyRole::Flanker:
+		return TEXT("Flanker");
+	case EOBEnemyRole::BulletBlocker:
+		return TEXT("BulletBlocker");
+	default:
+		return TEXT("Unknown");
+	}
 }
 
 bool AOBEnemy::IsPlayerHoldingBullet() const
@@ -790,37 +1066,44 @@ void AOBEnemy::UpdateSimpleLocomotionAnimation()
 	const float SpeedSquared = GetVelocity().SizeSquared2D();
 	UAnimationAsset* DesiredAnimation = IdleAnimation.Get();
 	float DesiredPlayRate = 1.0f;
-	if (SpeedSquared >= FMath::Square(RunAnimationMinSpeed))
+	if (SpeedSquared >= FMath::Square(WalkAnimationMinSpeed))
 	{
-		DesiredAnimation = RunAnimation.Get();
-		DesiredPlayRate = RunAnimationPlayRate;
-	}
-	else if (SpeedSquared >= FMath::Square(WalkAnimationMinSpeed))
-	{
-		DesiredAnimation = WalkAnimation ? WalkAnimation.Get() : RunAnimation.Get();
-		DesiredPlayRate = WalkAnimationPlayRate;
+		if (CurrentAIState == EOBEnemyAIState::Cautious)
+		{
+			DesiredAnimation = WalkAnimation ? WalkAnimation.Get() : IdleAnimation.Get();
+			DesiredPlayRate = WalkAnimation ? WalkAnimationPlayRate : 1.0f;
+		}
+		else
+		{
+			DesiredAnimation = RunAnimation ? RunAnimation.Get() : IdleAnimation.Get();
+			DesiredPlayRate = RunAnimation ? RunAnimationPlayRate : 1.0f;
+		}
 	}
 
 	if (DesiredAnimation && !IsAnimationCompatibleWithMesh(DesiredAnimation, GetMesh()))
 	{
-		if (DesiredAnimation == WalkAnimation.Get())
-		{
-			DesiredAnimation = RunAnimation.Get();
-		}
-		if (DesiredAnimation && !IsAnimationCompatibleWithMesh(DesiredAnimation, GetMesh()))
-		{
-			DesiredAnimation = IdleAnimation.Get();
-		}
+		DesiredAnimation = IdleAnimation.Get();
+		DesiredPlayRate = 1.0f;
 	}
-	if (!DesiredAnimation || DesiredAnimation == ActiveLocomotionAnimation)
+	if (!DesiredAnimation)
 	{
 		return;
 	}
 
-	ActiveLocomotionAnimation = DesiredAnimation;
+	const bool bAnimationChanged = DesiredAnimation != ActiveLocomotionAnimation;
+	const bool bPlayRateChanged = !FMath::IsNearlyEqual(DesiredPlayRate, ActiveLocomotionPlayRate, 0.01f);
+	if (!bAnimationChanged && !bPlayRateChanged)
+	{
+		return;
+	}
 
-	GetMesh()->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-	GetMesh()->PlayAnimation(DesiredAnimation, true);
+	if (bAnimationChanged)
+	{
+		ActiveLocomotionAnimation = DesiredAnimation;
+		GetMesh()->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+		GetMesh()->PlayAnimation(DesiredAnimation, true);
+	}
+	ActiveLocomotionPlayRate = DesiredPlayRate;
 	if (UAnimSingleNodeInstance* SingleNodeInstance = GetMesh()->GetSingleNodeInstance())
 	{
 		SingleNodeInstance->SetPlayRate(DesiredPlayRate);
@@ -841,25 +1124,43 @@ void AOBEnemy::RequestMove()
 
 	if (PlayerTarget && !PlayerTarget->IsDead())
 	{
-		if (ShouldPatrolWhilePlayerHasBullet())
+		bMovingToPatrolTarget = false;
+		bHasPatrolTarget = false;
+		CurrentApproachTarget = CalculateStateMovementTarget();
+
+		if (CurrentRole == EOBEnemyRole::Chaser)
 		{
-			bMovingToPatrolTarget = true;
-			CurrentApproachTarget = GetOrChoosePatrolTarget();
-		}
-		else
-		{
-			if (IsPlayerHoldingBullet())
+			if (AAIController* AI = Cast<AAIController>(GetController()))
 			{
-				bMovingToPatrolTarget = false;
-				bHasPatrolTarget = false;
-				CurrentApproachTarget = PlayerTarget->GetActorLocation();
-				MoveToCurrentTarget(55.0f, true, true);
+				bUsingDirectMovementFallback = false;
+				AI->MoveToActor(PlayerTarget, 20.0f, true, true, true, nullptr, true);
 			}
 			else
 			{
-				MoveAggressivelyToPlayer();
+				bUsingDirectMovementFallback = bUseDirectMovementFallback;
 			}
+			return;
 		}
+
+		float AcceptanceRadius = 90.0f;
+		if (CurrentAIState == EOBEnemyAIState::Cautious)
+		{
+			AcceptanceRadius = 25.0f;
+		}
+		else if (CurrentRole == EOBEnemyRole::BulletBlocker)
+		{
+			AcceptanceRadius = BulletBlockerAcceptanceRadius;
+		}
+		else if (CurrentRole == EOBEnemyRole::Flanker)
+		{
+			AcceptanceRadius = 100.0f;
+		}
+		else
+		{
+			AcceptanceRadius = 55.0f;
+		}
+
+		MoveToCurrentTarget(AcceptanceRadius, true, true);
 	}
 }
 

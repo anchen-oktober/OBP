@@ -14,6 +14,21 @@ enum class EOBEnemyType : uint8
 	Heavy
 };
 
+UENUM(BlueprintType)
+enum class EOBEnemyAIState : uint8
+{
+	Cautious,
+	Rush
+};
+
+UENUM(BlueprintType)
+enum class EOBEnemyRole : uint8
+{
+	Chaser,
+	Flanker,
+	BulletBlocker
+};
+
 UCLASS(PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API AOBEnemy : public ACharacter
 {
@@ -37,6 +52,69 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings")
 	float HeavySpeed = 260.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|AI State")
+	EOBEnemyAIState CurrentAIState = EOBEnemyAIState::Cautious;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|AI State")
+	EOBEnemyRole CurrentRole = EOBEnemyRole::Flanker;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Transition", meta=(ClampMin="0.0", UIMin="0.0", UIMax="1.0"))
+	float RushTransitionDelayMin = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Transition", meta=(ClampMin="0.0", UIMin="0.0", UIMax="1.0"))
+	float RushTransitionDelayMax = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Cautious", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float CautiousChaserChance = 0.20f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Cautious", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float CautiousFlankerChance = 0.80f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Cautious", meta=(ClampMin="0.0", UIMin="0.0", UIMax="2.0"))
+	float CautiousSpeedMultiplierMin = 0.70f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Cautious", meta=(ClampMin="0.0", UIMin="0.0", UIMax="2.0"))
+	float CautiousSpeedMultiplierMax = 0.85f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Cautious", meta=(ClampMin="0.0", UIMin="0.0", UIMax="0.5"))
+	float CautiousSpeedRandomVariance = 0.10f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Cautious", meta=(ClampMin="0.0", UIMin="100.0", UIMax="2000.0"))
+	float CautiousFlankerDistance = 820.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Cautious", meta=(ClampMin="0.0", UIMin="100.0", UIMax="1200.0"))
+	float CautiousFlankerMinDistance = 360.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Cautious", meta=(ClampMin="0.0", UIMin="0.0", UIMax="150.0"))
+	float CautiousCompressionSpeed = 28.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Rush", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float RushChaserChance = 0.70f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Rush", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float RushFlankerChance = 0.10f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Rush", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float RushBulletBlockerChance = 0.20f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Rush", meta=(ClampMin="0.0", UIMin="0.0", UIMax="2.0"))
+	float RushSpeedMultiplierMin = 1.10f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Rush", meta=(ClampMin="0.0", UIMin="0.0", UIMax="2.0"))
+	float RushSpeedMultiplierMax = 1.30f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Rush", meta=(ClampMin="0.0", UIMin="0.0", UIMax="0.5"))
+	float RushSpeedRandomVariance = 0.10f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Rush", meta=(ClampMin="0.0", UIMin="50.0", UIMax="1000.0"))
+	float RushFlankerDistance = 360.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Rush", meta=(ClampMin="0.0", UIMin="0.0", UIMax="500.0"))
+	float BulletBlockerAcceptanceRadius = 110.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Rush", meta=(ClampMin="0.05", ClampMax="0.95", UIMin="0.25", UIMax="0.75"))
+	float BulletBlockerPathFraction = 0.55f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure", meta=(ClampMin="0.0", ClampMax="1.0"))
 	float PlayerHasBulletSpeedMultiplier = 0.35f;
@@ -173,6 +251,12 @@ public:
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings")
 	bool IsDead() const { return bDead; }
 
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|AI State")
+	EOBEnemyAIState GetAIState() const { return CurrentAIState; }
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|AI State")
+	EOBEnemyRole GetAIRole() const { return CurrentRole; }
+
 	AOBBulletPickup* GetDroppedBulletPickup() const { return DroppedBulletPickup; }
 
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
@@ -186,6 +270,9 @@ public:
 
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
 	void OnEnemyDisappearing(EOBEnemyType Type, const FVector& Location);
+
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
+	void OnEnemyAIStateChanged(EOBEnemyAIState NewState, EOBEnemyRole NewRole);
 
 protected:
 	UPROPERTY()
@@ -202,6 +289,7 @@ protected:
 	bool bMovingToPatrolTarget = false;
 	bool bHasPatrolTarget = false;
 	bool bWasHoldingBullet = true;
+	bool bRushTransitionPending = false;
 	bool bKickKnockbackActive = false;
 	FVector PatrolOrigin = FVector::ZeroVector;
 	FVector CurrentPatrolTarget = FVector::ZeroVector;
@@ -211,14 +299,19 @@ protected:
 	TArray<FVector> CurrentPatrolPath;
 	int32 CurrentPatrolPathIndex = 0;
 	float PatrolStuckTime = 0.0f;
+	float CurrentStateSpeedMultiplier = 1.0f;
+	float CurrentStateElapsed = 0.0f;
+	float FlankerSlotAngleDegrees = 90.0f;
 	float ActiveKickKnockbackElapsed = 0.0f;
 	float ActiveKickKnockbackDuration = 0.0f;
 	float ActiveKickKnockbackDistance = 0.0f;
 	float ActiveKickKnockbackPreviousAlpha = 0.0f;
+	float ActiveLocomotionPlayRate = -1.0f;
 	UAnimationAsset* ActiveLocomotionAnimation = nullptr;
 
 	FTimerHandle StunTimerHandle;
 	FTimerHandle MoveTimerHandle;
+	FTimerHandle RushTransitionTimerHandle;
 
 	void ResumeAfterStun();
 	void BeginKickKnockback(const FVector& Direction, float Distance, float Duration, float StunDuration);
@@ -226,7 +319,19 @@ protected:
 	void RequestMove();
 	void StopPursuitForPlayerDeath();
 	void NormalizePressureSettings();
-	void ApplyBulletPressureSpeed();
+	void RefreshAIStateFromBullet();
+	void ScheduleRushTransition();
+	void CompleteRushTransition();
+	void SetAIState(EOBEnemyAIState NewState, bool bForceRefresh = false);
+	void AssignRoleForCurrentState();
+	void ApplyAIStateSpeed();
+	void ResetMovementForStateChange();
+	FVector CalculateStateMovementTarget() const;
+	FVector CalculateCautiousTarget() const;
+	FVector CalculateRushTarget() const;
+	AOBBulletPickup* FindActiveBulletPickup() const;
+	const TCHAR* GetAIStateName(EOBEnemyAIState State) const;
+	const TCHAR* GetAIRoleName(EOBEnemyRole AIRole) const;
 	bool IsPlayerHoldingBullet() const;
 	bool IsPlayerInsideBulletAttackRadius() const;
 	bool IsPlayerDetected() const;

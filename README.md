@@ -60,6 +60,43 @@ Pickup имеет мягкое притягивание на близкой ди
 
 ## Враги
 
+### AI States
+
+Враги используют явное состояние `EOBEnemyAIState` и роль `EOBEnemyRole`. Текущее состояние и роль доступны в `BP_OBEnemy_Fast` / `BP_OBEnemy_Heavy` через `Current AI State`, `Current Role`, `Get AI State` и `Get AI Role`.
+
+#### Cautious
+
+Активно, пока у игрока есть пуля (`Bullet: Ready`).
+
+- роли: `20% Chaser`, `80% Flanker`;
+- скорость: случайное значение `70-85%` базовой скорости с дополнительным разбросом `+-10%`;
+- все движущиеся враги используют только `Walk Animation`; `Run Animation` в Cautious не выбирается;
+- Chaser идёт прямо к игроку, постоянно сокращает дистанцию и не выполняет обходные манёвры;
+- Flanker один раз получает стабильный слот слева, справа или позади игрока;
+- Flanker корректирует слот относительно движения игрока и постепенно уменьшает радиус окружения от `Cautious Flanker Distance` до `Cautious Flanker Min Distance`;
+- скорость сжатия задаётся `Cautious Compression Speed`; орбитальное смещение и бесконечное движение по кругу не используются.
+
+#### Rush
+
+Запускается после выстрела (`Bullet: Lost`) с индивидуальной задержкой каждого врага `0.0-0.35s`.
+
+- роли: `70% Chaser`, `10% Flanker`, `20% Bullet Blocker`;
+- скорость: случайное значение `110-130%` базовой скорости с дополнительным разбросом `+-10%`;
+- все движущиеся враги используют `Run Animation`;
+- Chaser преследует игрока;
+- Flanker занимает ближнюю боковую позицию;
+- Bullet Blocker занимает точку на прямом отрезке между игроком и активным bullet pickup, перекрывая кратчайший путь; положение на отрезке задаётся `Bullet Blocker Path Fraction`.
+
+Роль и слот назначаются только при входе в состояние, поэтому они не скачут каждый кадр. Navigation target обновляется существующим таймером движения, а не в `Tick`. При возврате пули незавершённый Rush timer отменяется, враг сразу возвращается в Cautious и получает новую роль/скорость. Смена состояния проходит через `SetAIState`, сбрасывает текущую navigation target и вызывает `OnEnemyAIStateChanged`. В Output Log выводятся строки категории `LogOBEnemyAI` с прежним/новым состоянием, ролью и итоговым speed multiplier.
+
+Все параметры находятся в Enemy Blueprint Details:
+
+| Категория | Основные поля |
+| --- | --- |
+| `OneBulletSettings|AI State|Transition` | `Rush Transition Delay Min/Max` |
+| `OneBulletSettings|AI State|Cautious` | role chances, speed min/max, variance, Flanker start/min distance, compression speed |
+| `OneBulletSettings|AI State|Rush` | role chances, speed min/max, variance, Flanker distance, Bullet Blocker acceptance radius/path fraction |
+
 ### Fast Enemy
 
 - Быстро сокращает дистанцию.
@@ -232,10 +269,12 @@ Blueprint-события игрока:
 
 Логика состояний:
 
-1. `Bullet: Ready`: враги медленно патрулируют по территории вокруг `Patrol Center`.
-2. `Bullet: Ready` и игрок ближе `Detection Radius`: враги перестают патрулировать и начинают преследование.
-3. `Bullet: Ready` и игрок ближе `Player Has Bullet Attack Radius`: враги атакуют со скоростью `Base Speed * Player Has Bullet Attack Speed Multiplier`.
-4. `Bullet: Lost`: враги используют обычную скорость и окружают игрока через `Fast Surround Radius` / `Heavy Surround Radius`.
+1. `Bullet: Ready`: `Cautious`, распределение `20% Chaser / 80% Flanker`, осторожное окружение с сохранением дистанции.
+2. Выстрел: каждому врагу назначается случайная задержка `0.0-0.35s`.
+3. После задержки: `Rush`, распределение `70% Chaser / 10% Flanker / 20% Bullet Blocker`.
+4. Подбор пули: pending Rush отменяется, все живые враги возвращаются в `Cautious`.
+
+Старые поля секции `Pressure` оставлены для совместимости существующих Blueprint assets, но основное переключение поведения и скорости теперь задаётся секциями `AI State`.
 
 | Событие | Данные | Применение |
 | --- | --- | --- |
@@ -243,6 +282,7 @@ Blueprint-события игрока:
 | `OnEnemyKicked` | `Direction`, `Type` | hit reaction / эффект пинка |
 | `OnEnemySpawned` | `Type`, `Location` | spawn VFX |
 | `OnEnemyDisappearing` | `Type`, `Location` | dissolve / disappear VFX |
+| `OnEnemyAIStateChanged` | `New State`, `New Role` | VFX/UI/debug feedback при переключении Cautious/Rush |
 
 Spawn/disappear VFX собираются нодами в каждом BP врага, поэтому их легко заменить без изменения C++.
 

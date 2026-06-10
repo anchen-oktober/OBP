@@ -119,6 +119,28 @@ def set_asset_if_empty(obj, prop, asset_path):
         unreal.log_warning(f"Could not set default asset {prop} on {obj}: {exc}")
 
 
+def configure_enemy_ai_states(enemy_cdo):
+    set_prop(enemy_cdo, "rush_transition_delay_min", 0.0)
+    set_prop(enemy_cdo, "rush_transition_delay_max", 0.35)
+    set_prop(enemy_cdo, "cautious_chaser_chance", 0.20)
+    set_prop(enemy_cdo, "cautious_flanker_chance", 0.80)
+    set_prop(enemy_cdo, "cautious_speed_multiplier_min", 0.70)
+    set_prop(enemy_cdo, "cautious_speed_multiplier_max", 0.85)
+    set_prop(enemy_cdo, "cautious_speed_random_variance", 0.10)
+    set_prop(enemy_cdo, "cautious_flanker_distance", 820.0)
+    set_prop(enemy_cdo, "cautious_flanker_min_distance", 360.0)
+    set_prop(enemy_cdo, "cautious_compression_speed", 28.0)
+    set_prop(enemy_cdo, "rush_chaser_chance", 0.70)
+    set_prop(enemy_cdo, "rush_flanker_chance", 0.10)
+    set_prop(enemy_cdo, "rush_bullet_blocker_chance", 0.20)
+    set_prop(enemy_cdo, "rush_speed_multiplier_min", 1.10)
+    set_prop(enemy_cdo, "rush_speed_multiplier_max", 1.30)
+    set_prop(enemy_cdo, "rush_speed_random_variance", 0.10)
+    set_prop(enemy_cdo, "rush_flanker_distance", 360.0)
+    set_prop(enemy_cdo, "bullet_blocker_acceptance_radius", 110.0)
+    set_prop(enemy_cdo, "bullet_blocker_path_fraction", 0.55)
+
+
 ensure_dir("/Game/OneBullet")
 ensure_dir(BP_DIR)
 
@@ -138,6 +160,7 @@ wbp_hud_cdo = cdo(wbp_hud)
 
 fast_cdo = cdo(bp_enemy_fast)
 set_prop(fast_cdo, "enemy_type", unreal.OBEnemyType.FAST)
+configure_enemy_ai_states(fast_cdo)
 set_prop(fast_cdo, "fast_speed", 850.0)
 set_prop(fast_cdo, "heavy_speed", 260.0)
 set_prop(fast_cdo, "shot_stagger_strength", 430.0)
@@ -159,6 +182,7 @@ set_prop(fast_cdo, "run_animation_play_rate", 1.0)
 
 heavy_cdo = cdo(bp_enemy_heavy)
 set_prop(heavy_cdo, "enemy_type", unreal.OBEnemyType.HEAVY)
+configure_enemy_ai_states(heavy_cdo)
 set_prop(heavy_cdo, "fast_speed", 760.0)
 set_prop(heavy_cdo, "heavy_speed", 230.0)
 set_prop(heavy_cdo, "shot_stagger_strength", 145.0)
