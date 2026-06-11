@@ -189,6 +189,12 @@ void AOBEnemy::Configure(EOBEnemyType NewType)
 	ApplyAIStateSpeed();
 }
 
+void AOBEnemy::SetDifficultySpeedMultiplier(float NewMultiplier)
+{
+	DifficultySpeedMultiplier = FMath::Max(NewMultiplier, 0.0f);
+	ApplyAIStateSpeed();
+}
+
 void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
 {
 	if (bDead)
@@ -665,7 +671,10 @@ void AOBEnemy::SetAssignedRole(EOBEnemyRole NewRole, int32 RoleSlot, int32 RoleC
 void AOBEnemy::ApplyAIStateSpeed()
 {
 	const float BaseSpeed = EnemyType == EOBEnemyType::Heavy ? HeavySpeed : FastSpeed;
-	GetCharacterMovement()->MaxWalkSpeed = BaseSpeed * FMath::Max(CurrentStateSpeedMultiplier, 0.0f);
+	GetCharacterMovement()->MaxWalkSpeed =
+		BaseSpeed
+		* FMath::Max(CurrentStateSpeedMultiplier, 0.0f)
+		* FMath::Max(DifficultySpeedMultiplier, 0.0f);
 }
 
 void AOBEnemy::ResetMovementForStateChange()

@@ -3,7 +3,10 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "OBGameState.h"
+#include "OBWaveManager.h"
 #include "OBHUDWidget.generated.h"
+
+class UTextBlock;
 
 UCLASS(Blueprintable, PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API UOBHUDWidget : public UUserWidget
@@ -12,6 +15,7 @@ class ONEBULLETLEFT_API UOBHUDWidget : public UUserWidget
 
 public:
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	// Gameplay state exposed for WBP_OBHUD; widget layout and visuals stay in Blueprint.
@@ -44,6 +48,33 @@ public:
 
 	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings|HUD")
 	bool bCurrentImmortalMode = false;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Waves")
+	TObjectPtr<UTextBlock> WaveTxt;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Waves")
+	TObjectPtr<UTextBlock> EnemiesLeftTxt;
+
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings|HUD|Waves")
+	EOBWaveState CurrentWaveState = EOBWaveState::Waiting;
+
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings|HUD|Waves")
+	int32 CurrentWaveNumber = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings|HUD|Waves")
+	int32 CurrentEnemiesLeft = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings|HUD|Waves")
+	int32 CurrentNextWaveSeconds = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|HUD|Waves|Animation", meta=(ClampMin="0.1"))
+	float WaveTextAnimationSpeed = 9.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|HUD|Waves|Animation", meta=(ClampMin="0.5", ClampMax="1.0"))
+	float WaveTextHiddenScale = 0.9f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|HUD|Waves|Animation", meta=(ClampMin="0.0"))
+	float WaveClearedDisplayDuration = 0.85f;
 
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|HUD")
 	bool IsBulletReady() const { return CurrentBulletState == EBulletState::Ready; }
@@ -78,6 +109,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD")
 	void RefreshFromGameState();
 
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD|Waves")
+	void RefreshFromWaveManager();
+
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|HUD")
 	void OnHudInitialized();
 
@@ -101,4 +135,34 @@ public:
 
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|HUD")
 	void OnHudStateRefreshed(EBulletState NewBulletState, int32 NewKillCount, bool bNewGameOver);
+
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<AOBWaveManager> WaveManager;
+
+	float WaveTextOpacity = 0.0f;
+	float EnemiesTextOpacity = 0.0f;
+	float WaveTextTargetOpacity = 0.0f;
+	float EnemiesTextTargetOpacity = 0.0f;
+	float ClearedMessageTimeRemaining = 0.0f;
+	FText PendingWaveMessage = FText::GetEmpty();
+	bool bHasPendingWaveMessage = false;
+
+	void TryBindWaveManager();
+	void UnbindWaveManager();
+	void SetWaveMessage(const FText& Message, bool bAnimate);
+	void SetEnemiesMessage(const FText& Message, bool bAnimate);
+	void HideWaveMessage();
+	void HideEnemiesMessage();
+	void UpdateWaveTextAnimations(float DeltaTime);
+	void UpdateCountdown(float DeltaTime);
+
+	UFUNCTION()
+	void HandleWaveStateChanged(EOBWaveState NewState, EOBWaveState PreviousState);
+
+	UFUNCTION()
+	void HandleWaveStarted(int32 WaveNumber, int32 EnemyCount, float DifficultyMultiplier);
+
+	UFUNCTION()
+	void HandleWaveCompleted(int32 WaveNumber);
 };

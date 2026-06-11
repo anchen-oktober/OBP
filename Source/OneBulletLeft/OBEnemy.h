@@ -326,6 +326,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void Configure(EOBEnemyType NewType);
 
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Difficulty")
+	void SetDifficultySpeedMultiplier(float NewMultiplier);
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Difficulty")
+	float GetDifficultySpeedMultiplier() const { return DifficultySpeedMultiplier; }
+
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void KillAndDropBullet(const FVector& DropLocation);
 
@@ -395,6 +401,7 @@ protected:
 	int32 CurrentPatrolPathIndex = 0;
 	float PatrolStuckTime = 0.0f;
 	float CurrentStateSpeedMultiplier = 1.0f;
+	float DifficultySpeedMultiplier = 1.0f;
 	float CurrentStateElapsed = 0.0f;
 	float FlankerSlotAngleDegrees = 90.0f;
 	float CurrentFlankerOffsetDistance = 450.0f;

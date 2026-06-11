@@ -2,31 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
-#include "OBEnemy.h"
+#include "OBWaveManager.h"
 #include "OBGameMode.generated.h"
 
 class AOBBulletPickup;
 class AOBCharacter;
-USTRUCT(BlueprintType)
-struct FOBWaveDefinition
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Wave")
-	int32 FastCount = 2;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Wave")
-	int32 HeavyCount = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Wave")
-	float DelayBeforeWave = 1.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Wave")
-	float SpawnInterval = 1.25f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Wave")
-	int32 MaxLiveEnemies = 4;
-};
 
 UCLASS(PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API AOBGameMode : public AGameModeBase
@@ -47,17 +27,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Window", meta=(EditCondition="bForceWindowedMode", ClampMin="240"))
 	int32 WindowedResolutionY = 800;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning")
-	float SpawnInterval = 3.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="OneBulletSettings|Waves")
+	TSubclassOf<AOBWaveManager> WaveManagerClass;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning")
-	int32 MaxLiveEnemies = 8;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Waves")
-	bool bUseScriptedWaves = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Waves")
-	TArray<FOBWaveDefinition> WaveDefinitions;
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="OneBulletSettings|Waves")
+	TObjectPtr<AOBWaveManager> WaveManager;
 
 	UPROPERTY(EditDefaultsOnly, Category="OneBulletSettings|Spawning")
 	TSubclassOf<AOBEnemy> EnemyClass;
@@ -94,23 +68,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Flow")
 	void RestartRun(AOBCharacter* Player);
 
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Waves")
+	AOBWaveManager* GetWaveManager() const { return WaveManager; }
+
 protected:
-	FTimerHandle SpawnTimerHandle;
-	FTimerHandle WaveStartTimerHandle;
 	FTimerHandle WindowModeTimerHandle;
-	TArray<FVector> SpawnPoints;
-	int32 CurrentWaveIndex = INDEX_NONE;
-	int32 RemainingFastInWave = 0;
-	int32 RemainingHeavyInWave = 0;
 
 	void ApplyWindowMode();
-	void SpawnEnemyWaveTick();
-	void StartNextWave();
-	void StartWave(int32 WaveIndex);
-	bool SpawnEnemyOfType(EOBEnemyType Type);
-	void RestartSpawning();
+	void InitializeWaveManager();
 	void DestroyRunActors();
 	bool FindRestartTransform(FVector& OutLocation, FRotator& OutRotation) const;
-	bool TryChooseSpawnLocation(FVector& OutLocation) const;
-	int32 CountLiveEnemies() const;
 };
