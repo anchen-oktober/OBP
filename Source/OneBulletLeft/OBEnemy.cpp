@@ -88,8 +88,9 @@ void AOBEnemy::BeginPlay()
 	PatrolOrigin.Z = GetActorLocation().Z;
 	LastPatrolLocation = PatrolOrigin;
 	bWasHoldingBullet = IsPlayerHoldingBullet();
+	RepathTimeJitter = FMath::FRandRange(0.90f, 1.10f);
 	SetAIState(bWasHoldingBullet ? EOBEnemyAIState::Cautious : EOBEnemyAIState::Rush, true);
-	GetWorldTimerManager().SetTimer(MoveTimerHandle, this, &AOBEnemy::RequestMove, 0.35f, true, 0.05f);
+	ScheduleNextMoveRequest(FMath::FRandRange(0.05f, 0.25f));
 }
 
 bool AOBEnemy::IsDetectionRadiusVisualizationEnabled()
@@ -120,6 +121,16 @@ void AOBEnemy::Tick(float DeltaSeconds)
 	}
 
 	CurrentStateElapsed += DeltaSeconds;
+	if (CurrentRole == EOBEnemyRole::Flanker)
+	{
+		const float MinFlankRadius = CurrentAIState == EOBEnemyAIState::Cautious
+			? CautiousFlankMinRadius
+			: RushFlankMinRadius;
+		CurrentFlankerOffsetDistance = FMath::Max(
+			MinFlankRadius,
+			CurrentFlankerOffsetDistance - CurrentFlankApproachSpeed * DeltaSeconds);
+		FlankSideLockRemaining = FMath::Max(0.0f, FlankSideLockRemaining - DeltaSeconds);
+	}
 	RefreshAIStateFromBullet();
 
 	if (PlayerTarget && PlayerTarget->IsDead())
@@ -154,6 +165,8 @@ void AOBEnemy::Tick(float DeltaSeconds)
 	UpdateSimpleLocomotionAnimation();
 	TryTouchKill();
 	DrawDetectionRadiusDebug();
+	DrawAttackRadiusDebug();
+	DrawAIRoleTargetDebug();
 }
 
 void AOBEnemy::Configure(EOBEnemyType NewType)
@@ -224,6 +237,8 @@ void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
 			DroppedBulletPickup->SetActorRelativeLocation(BulletAttachOffset);
 		}
 	}
+
+	AssignEnemyRoles();
 }
 
 void AOBEnemy::ApplyKick(const FVector& Direction)
@@ -355,6 +370,9 @@ void AOBEnemy::NormalizePressureSettings()
 	PatrolPerimeterStepDegrees = FMath::Clamp(PatrolPerimeterStepDegrees, 5.0f, 180.0f);
 	PatrolObstacleProbeDistance = FMath::Max(PatrolObstacleProbeDistance, 0.0f);
 	PatrolObstacleProbeRadius = FMath::Max(PatrolObstacleProbeRadius, 0.0f);
+	FastAttackRadius = FMath::Max(FastAttackRadius, 0.0f);
+	HeavyAttackRadius = FMath::Max(HeavyAttackRadius, FastAttackRadius);
+	AttackRadiusDebugThickness = FMath::Max(AttackRadiusDebugThickness, 1.0f);
 
 	RushTransitionDelayMin = FMath::Max(RushTransitionDelayMin, 0.0f);
 	RushTransitionDelayMax = FMath::Max(RushTransitionDelayMax, RushTransitionDelayMin);
@@ -372,9 +390,35 @@ void AOBEnemy::NormalizePressureSettings()
 	RushSpeedMultiplierMin = FMath::Max(RushSpeedMultiplierMin, 0.0f);
 	RushSpeedMultiplierMax = FMath::Max(RushSpeedMultiplierMax, RushSpeedMultiplierMin);
 	RushSpeedRandomVariance = FMath::Clamp(RushSpeedRandomVariance, 0.0f, 0.5f);
-	RushFlankerDistance = FMath::Max(RushFlankerDistance, 0.0f);
+	RushFlankerDistanceMin = FMath::Max(RushFlankerDistanceMin, 0.0f);
+	RushFlankerDistanceMax = FMath::Max(RushFlankerDistanceMax, RushFlankerDistanceMin);
 	BulletBlockerAcceptanceRadius = FMath::Max(BulletBlockerAcceptanceRadius, 0.0f);
-	BulletBlockerPathFraction = FMath::Clamp(BulletBlockerPathFraction, 0.05f, 0.95f);
+	AIRoleTargetDebugSize = FMath::Max(AIRoleTargetDebugSize, 2.0f);
+	MinDistanceBetweenEnemyTargets = FMath::Max(MinDistanceBetweenEnemyTargets, 0.0f);
+	FlankRadiusMin = FMath::Max(FlankRadiusMin, 0.0f);
+	FlankRadiusMax = FMath::Max(FlankRadiusMax, FlankRadiusMin);
+	TargetRandomOffsetMin = FMath::Max(TargetRandomOffsetMin, 0.0f);
+	TargetRandomOffsetMax = FMath::Max(TargetRandomOffsetMax, TargetRandomOffsetMin);
+	TargetReservationAttempts = FMath::Clamp(TargetReservationAttempts, 1, 20);
+	CautiousFlankStartRadius = FMath::Max(CautiousFlankStartRadius, 0.0f);
+	CautiousFlankMinRadius = FMath::Clamp(CautiousFlankMinRadius, 0.0f, CautiousFlankStartRadius);
+	CautiousFlankApproachSpeedMin = FMath::Max(CautiousFlankApproachSpeedMin, 0.0f);
+	CautiousFlankApproachSpeedMax = FMath::Max(CautiousFlankApproachSpeedMax, CautiousFlankApproachSpeedMin);
+	RushFlankStartRadius = FMath::Max(RushFlankStartRadius, 0.0f);
+	RushFlankMinRadius = FMath::Clamp(RushFlankMinRadius, 0.0f, RushFlankStartRadius);
+	RushFlankApproachSpeedMin = FMath::Max(RushFlankApproachSpeedMin, 0.0f);
+	RushFlankApproachSpeedMax = FMath::Max(RushFlankApproachSpeedMax, RushFlankApproachSpeedMin);
+	FlankSideLockDurationMin = FMath::Max(FlankSideLockDurationMin, 0.0f);
+	FlankSideLockDurationMax = FMath::Max(FlankSideLockDurationMax, FlankSideLockDurationMin);
+	MaxAllowedFlankDistanceIncrease = FMath::Max(MaxAllowedFlankDistanceIncrease, 0.0f);
+	FlankTargetLateralOffsetMax = FMath::Max(FlankTargetLateralOffsetMax, 0.0f);
+	FlankClosePressureRange = FMath::Max(FlankClosePressureRange, 0.0f);
+	ChaserRepathIntervalMin = FMath::Max(ChaserRepathIntervalMin, 0.05f);
+	ChaserRepathIntervalMax = FMath::Max(ChaserRepathIntervalMax, ChaserRepathIntervalMin);
+	FlankerRepathIntervalMin = FMath::Max(FlankerRepathIntervalMin, 0.05f);
+	FlankerRepathIntervalMax = FMath::Max(FlankerRepathIntervalMax, FlankerRepathIntervalMin);
+	BlockerRepathIntervalMin = FMath::Max(BlockerRepathIntervalMin, 0.05f);
+	BlockerRepathIntervalMax = FMath::Max(BlockerRepathIntervalMax, BlockerRepathIntervalMin);
 }
 
 void AOBEnemy::RefreshAIStateFromBullet()
@@ -444,7 +488,7 @@ void AOBEnemy::SetAIState(EOBEnemyAIState NewState, bool bForceRefresh)
 	CurrentStateElapsed = 0.0f;
 	bRushTransitionPending = false;
 	GetWorldTimerManager().ClearTimer(RushTransitionTimerHandle);
-	AssignRoleForCurrentState();
+	AssignEnemyRoles();
 
 	const float SpeedMin = CurrentAIState == EOBEnemyAIState::Cautious
 		? CautiousSpeedMultiplierMin
@@ -475,48 +519,146 @@ void AOBEnemy::SetAIState(EOBEnemyAIState NewState, bool bForceRefresh)
 	OnEnemyAIStateChanged(CurrentAIState, CurrentRole);
 }
 
-void AOBEnemy::AssignRoleForCurrentState()
+void AOBEnemy::GetLiveEnemies(TArray<AOBEnemy*>& OutEnemies) const
 {
-	if (CurrentAIState == EOBEnemyAIState::Cautious)
+	OutEnemies.Reset();
+	TArray<AActor*> EnemyActors;
+	UGameplayStatics::GetAllActorsOfClass(this, AOBEnemy::StaticClass(), EnemyActors);
+	for (AActor* Actor : EnemyActors)
 	{
-		const float TotalChance = CautiousChaserChance + CautiousFlankerChance;
-		const float Roll = FMath::FRandRange(0.0f, FMath::Max(TotalChance, KINDA_SMALL_NUMBER));
-		CurrentRole = Roll < CautiousChaserChance
-			? EOBEnemyRole::Chaser
-			: EOBEnemyRole::Flanker;
-		if (CurrentRole == EOBEnemyRole::Flanker)
+		AOBEnemy* Enemy = Cast<AOBEnemy>(Actor);
+		if (Enemy && !Enemy->IsDead())
 		{
-			switch (GetUniqueID() % 3)
-			{
-			case 0:
-				FlankerSlotAngleDegrees = -90.0f;
-				break;
-			case 1:
-				FlankerSlotAngleDegrees = 90.0f;
-				break;
-			default:
-				FlankerSlotAngleDegrees = 180.0f;
-				break;
-			}
+			OutEnemies.Add(Enemy);
 		}
+	}
+
+	OutEnemies.Sort([](const AOBEnemy& Left, const AOBEnemy& Right)
+	{
+		return Left.GetUniqueID() < Right.GetUniqueID();
+	});
+}
+
+void AOBEnemy::AssignEnemyRoles()
+{
+	TArray<AOBEnemy*> LiveEnemies;
+	GetLiveEnemies(LiveEnemies);
+	if (LiveEnemies.IsEmpty())
+	{
 		return;
 	}
 
-	const float TotalChance = RushChaserChance + RushFlankerChance + RushBulletBlockerChance;
-	const float Roll = FMath::FRandRange(0.0f, FMath::Max(TotalChance, KINDA_SMALL_NUMBER));
-	if (Roll < RushChaserChance)
+	auto AssignStateGroup = [this](const TArray<AOBEnemy*>& Group, EOBEnemyAIState State)
 	{
-		CurrentRole = EOBEnemyRole::Chaser;
+		const int32 EnemyCount = Group.Num();
+		if (EnemyCount == 0)
+		{
+			return;
+		}
+
+		const bool bCanUseBlocker = State == EOBEnemyAIState::Rush && FindActiveBulletPickup() != nullptr;
+		int32 ChaserCount = 1;
+		int32 BlockerCount = 0;
+		if (EnemyCount >= 3)
+		{
+			const float ChaserChance = State == EOBEnemyAIState::Cautious ? CautiousChaserChance : RushChaserChance;
+			const float FlankerChance = State == EOBEnemyAIState::Cautious ? CautiousFlankerChance : RushFlankerChance;
+			const float BlockerChance = bCanUseBlocker ? RushBulletBlockerChance : 0.0f;
+			const float TotalChance = FMath::Max(ChaserChance + FlankerChance + BlockerChance, KINDA_SMALL_NUMBER);
+			ChaserCount = FMath::Clamp(FMath::RoundToInt(EnemyCount * ChaserChance / TotalChance), 1, EnemyCount);
+			BlockerCount = FMath::Clamp(
+				FMath::RoundToInt(EnemyCount * BlockerChance / TotalChance),
+				0,
+				EnemyCount - ChaserCount);
+		}
+		else if (EnemyCount == 2 && bCanUseBlocker && RushBulletBlockerChance >= RushFlankerChance)
+		{
+			BlockerCount = 1;
+		}
+
+		const int32 FlankerCount = EnemyCount - ChaserCount - BlockerCount;
+		int32 FlankerSlot = 0;
+		int32 BlockerSlot = 0;
+		for (int32 Index = 0; Index < EnemyCount; ++Index)
+		{
+			EOBEnemyRole AssignedRole = EOBEnemyRole::Flanker;
+			int32 RoleSlot = FlankerSlot++;
+			int32 RoleCount = FlankerCount;
+			if (Index < ChaserCount)
+			{
+				AssignedRole = EOBEnemyRole::Chaser;
+				RoleSlot = Index;
+				RoleCount = ChaserCount;
+			}
+			else if (Index >= ChaserCount + FlankerCount)
+			{
+				AssignedRole = EOBEnemyRole::BulletBlocker;
+				RoleSlot = BlockerSlot++;
+				RoleCount = BlockerCount;
+			}
+			Group[Index]->SetAssignedRole(AssignedRole, RoleSlot, RoleCount);
+		}
+	};
+
+	TArray<AOBEnemy*> CautiousEnemies;
+	TArray<AOBEnemy*> RushEnemies;
+	for (AOBEnemy* Enemy : LiveEnemies)
+	{
+		(Enemy->CurrentAIState == EOBEnemyAIState::Cautious ? CautiousEnemies : RushEnemies).Add(Enemy);
 	}
-	else if (Roll < RushChaserChance + RushFlankerChance)
+	AssignStateGroup(CautiousEnemies, EOBEnemyAIState::Cautious);
+	AssignStateGroup(RushEnemies, EOBEnemyAIState::Rush);
+}
+
+void AOBEnemy::SetAssignedRole(EOBEnemyRole NewRole, int32 RoleSlot, int32 RoleCount)
+{
+	const EOBEnemyRole PreviousRole = CurrentRole;
+	CurrentRole = NewRole;
+	if (CurrentRole == EOBEnemyRole::Flanker)
 	{
-		CurrentRole = EOBEnemyRole::Flanker;
-		FlankerSlotAngleDegrees = (GetUniqueID() % 2 == 0) ? -90.0f : 90.0f;
+		const bool bNeedsNewFlankSetup = !bHasFlankSetup
+			|| PreviousRole != EOBEnemyRole::Flanker
+			|| FlankerRadiusState != CurrentAIState;
+		if (bNeedsNewFlankSetup)
+		{
+			static constexpr float FlankSectorAngles[] = {-65.0f, 65.0f, -125.0f, 125.0f};
+			const int32 SectorIndex = RoleCount <= 1
+				? static_cast<int32>(GetUniqueID() % UE_ARRAY_COUNT(FlankSectorAngles))
+				: RoleSlot % UE_ARRAY_COUNT(FlankSectorAngles);
+			FlankerSlotAngleDegrees = FlankSectorAngles[SectorIndex];
+			LockedFlankDirection = GetPlayerMovementDirection()
+				.RotateAngleAxis(FlankerSlotAngleDegrees, FVector::UpVector)
+				.GetSafeNormal2D();
+			LockedFlankLateralOffset = FMath::FRandRange(
+				-FlankTargetLateralOffsetMax,
+				FlankTargetLateralOffsetMax);
+			FlankSideLockRemaining = FMath::FRandRange(FlankSideLockDurationMin, FlankSideLockDurationMax);
+			bHasFlankSetup = true;
+			FlankerRadiusState = CurrentAIState;
+			CurrentFlankerOffsetDistance = CurrentAIState == EOBEnemyAIState::Cautious
+				? CautiousFlankStartRadius
+				: RushFlankStartRadius;
+			CurrentFlankApproachSpeed = CurrentAIState == EOBEnemyAIState::Cautious
+				? FMath::FRandRange(CautiousFlankApproachSpeedMin, CautiousFlankApproachSpeedMax)
+				: FMath::FRandRange(RushFlankApproachSpeedMin, RushFlankApproachSpeedMax);
+		}
 	}
-	else
+
+	if (PreviousRole != CurrentRole)
 	{
-		CurrentRole = EOBEnemyRole::BulletBlocker;
-		FlankerSlotAngleDegrees = (GetUniqueID() % 2 == 0) ? -90.0f : 90.0f;
+		UE_LOG(
+			LogOBEnemyAI,
+			Log,
+			TEXT("%s role %s -> %s (%s)"),
+			*GetName(),
+			GetAIRoleName(PreviousRole),
+			GetAIRoleName(CurrentRole),
+			GetAIStateName(CurrentAIState));
+		OnEnemyAIStateChanged(CurrentAIState, CurrentRole);
+		if (HasActorBegunPlay() && !bDead)
+		{
+			ResetMovementForStateChange();
+		}
 	}
 }
 
@@ -545,81 +687,213 @@ void AOBEnemy::ResetMovementForStateChange()
 	}
 }
 
-FVector AOBEnemy::CalculateStateMovementTarget() const
+FVector AOBEnemy::CalculateStateMovementTarget()
 {
-	switch (CurrentAIState)
+	switch (CurrentRole)
 	{
-	case EOBEnemyAIState::Cautious:
-		return CalculateCautiousTarget();
-	case EOBEnemyAIState::Rush:
-		return CalculateRushTarget();
+	case EOBEnemyRole::Chaser:
+		return CalculateChaserTarget();
+	case EOBEnemyRole::Flanker:
+		return CalculateFlankerTarget(CurrentAIState == EOBEnemyAIState::Cautious);
+	case EOBEnemyRole::BulletBlocker:
+		return CalculateBulletBlockerTarget();
 	default:
 		return GetActorLocation();
 	}
 }
 
-FVector AOBEnemy::CalculateCautiousTarget() const
+FVector AOBEnemy::CalculateChaserTarget() const
 {
-	if (!PlayerTarget)
-	{
-		return GetActorLocation();
-	}
-
-	FVector PlayerForward = PlayerTarget->GetActorForwardVector().GetSafeNormal2D();
-	if (const AController* PlayerController = PlayerTarget->GetController())
-	{
-		PlayerForward = FRotationMatrix(FRotator(0.0f, PlayerController->GetControlRotation().Yaw, 0.0f)).GetUnitAxis(EAxis::X).GetSafeNormal2D();
-	}
-
-	if (CurrentRole == EOBEnemyRole::Chaser)
-	{
-		return PlayerTarget->GetActorLocation();
-	}
-
-	const float DesiredDistance = FMath::Max(
-		CautiousFlankerMinDistance,
-		CautiousFlankerDistance - CurrentStateElapsed * CautiousCompressionSpeed);
-	const float CurrentDistance = FVector::Dist2D(GetActorLocation(), PlayerTarget->GetActorLocation());
-	const float TargetDistance = FMath::Min(DesiredDistance, CurrentDistance);
-	const FVector SlotDirection = PlayerForward.RotateAngleAxis(FlankerSlotAngleDegrees, FVector::UpVector).GetSafeNormal2D();
-	FVector Target = PlayerTarget->GetActorLocation() + SlotDirection * TargetDistance;
-	ProjectPointToNavigation(Target);
-	return Target;
+	return PlayerTarget ? PlayerTarget->GetActorLocation() : GetActorLocation();
 }
 
-FVector AOBEnemy::CalculateRushTarget() const
+FVector AOBEnemy::CalculateFlankerTarget(bool bCompressDistance)
+{
+	if (!PlayerTarget)
+	{
+		return GetActorLocation();
+	}
+	(void)bCompressDistance;
+
+	const FVector PlayerLocation = PlayerTarget->GetActorLocation();
+	const float CurrentDistanceToPlayer = FVector::Dist2D(GetActorLocation(), PlayerLocation);
+	const float MinFlankRadius = CurrentAIState == EOBEnemyAIState::Cautious
+		? CautiousFlankMinRadius
+		: RushFlankMinRadius;
+	if (CurrentDistanceToPlayer <= MinFlankRadius + FlankClosePressureRange)
+	{
+		FVector PressureTarget = PlayerLocation;
+		ProjectPointToNavigation(PressureTarget);
+		return PressureTarget;
+	}
+
+	if (FlankSideLockRemaining <= 0.0f)
+	{
+		LockedFlankDirection = GetPlayerMovementDirection()
+			.RotateAngleAxis(FlankerSlotAngleDegrees, FVector::UpVector)
+			.GetSafeNormal2D();
+		LockedFlankLateralOffset = FMath::FRandRange(
+			-FlankTargetLateralOffsetMax,
+			FlankTargetLateralOffsetMax);
+		FlankSideLockRemaining = FMath::FRandRange(FlankSideLockDurationMin, FlankSideLockDurationMax);
+	}
+
+	const float MaxTargetRadius = CurrentDistanceToPlayer + MaxAllowedFlankDistanceIncrease;
+	const float TargetRadius = FMath::Min(CurrentFlankerOffsetDistance, MaxTargetRadius);
+	const FVector SideDirection = LockedFlankDirection.RotateAngleAxis(90.0f, FVector::UpVector);
+	FVector FallbackTarget = PlayerLocation
+		+ LockedFlankDirection * TargetRadius
+		+ SideDirection * LockedFlankLateralOffset;
+	if (FVector::DistSquared2D(FallbackTarget, PlayerLocation) > FMath::Square(MaxTargetRadius))
+	{
+		FallbackTarget = PlayerLocation
+			+ (FallbackTarget - PlayerLocation).GetSafeNormal2D() * MaxTargetRadius;
+	}
+	ProjectPointToNavigation(FallbackTarget);
+	if (FVector::DistSquared2D(FallbackTarget, PlayerLocation) > FMath::Square(MaxTargetRadius))
+	{
+		FallbackTarget = PlayerLocation
+			+ (FallbackTarget - PlayerLocation).GetSafeNormal2D() * MaxTargetRadius;
+		ProjectPointToNavigation(FallbackTarget);
+	}
+
+	return FindUnclaimedTarget(
+		[this, PlayerLocation, SideDirection, TargetRadius, MaxTargetRadius](int32 Attempt)
+		{
+			const float AttemptOffset = Attempt == 0
+				? 0.0f
+				: FMath::FRandRange(-FlankTargetLateralOffsetMax * 0.35f, FlankTargetLateralOffsetMax * 0.35f);
+			FVector Candidate = PlayerLocation
+				+ LockedFlankDirection * TargetRadius
+				+ SideDirection * (LockedFlankLateralOffset + AttemptOffset);
+			const FVector PlayerToCandidate = (Candidate - PlayerLocation).GetSafeNormal2D();
+			const float CandidateRadius = FVector::Dist2D(Candidate, PlayerLocation);
+			if (CandidateRadius > MaxTargetRadius)
+			{
+				Candidate = PlayerLocation + PlayerToCandidate * MaxTargetRadius;
+			}
+			ProjectPointToNavigation(Candidate);
+			if (FVector::DistSquared2D(Candidate, PlayerLocation) > FMath::Square(MaxTargetRadius))
+			{
+				Candidate = PlayerLocation
+					+ (Candidate - PlayerLocation).GetSafeNormal2D() * MaxTargetRadius;
+				ProjectPointToNavigation(Candidate);
+			}
+			return Candidate;
+		},
+		FallbackTarget);
+}
+
+FVector AOBEnemy::CalculateBulletBlockerTarget()
 {
 	if (!PlayerTarget)
 	{
 		return GetActorLocation();
 	}
 
-	if (CurrentRole == EOBEnemyRole::Chaser)
+	if (const AOBBulletPickup* BulletPickup = FindActiveBulletPickup())
 	{
-		return PlayerTarget->GetActorLocation();
+		const FVector PlayerLocation = PlayerTarget->GetActorLocation();
+		const FVector BulletLocation = BulletPickup->GetActorLocation();
+		const FVector PlayerToBullet = (BulletLocation - PlayerLocation).GetSafeNormal2D();
+		const FVector SideDirection = PlayerToBullet.RotateAngleAxis(90.0f, FVector::UpVector);
+		FVector FallbackTarget = FMath::Lerp(PlayerLocation, BulletLocation, 0.5f);
+		ProjectPointToNavigation(FallbackTarget);
+
+		return FindUnclaimedTarget(
+			[this, PlayerLocation, BulletLocation, SideDirection](int32 Attempt)
+			{
+				const float MidpointAlpha = FMath::Clamp(0.5f + FMath::FRandRange(-0.12f, 0.12f), 0.25f, 0.75f);
+				const float SideSign = ((GetUniqueID() + Attempt) & 1) == 0 ? 1.0f : -1.0f;
+				const float SideOffset = FMath::FRandRange(TargetRandomOffsetMin, TargetRandomOffsetMax) * SideSign;
+				FVector Candidate = FMath::Lerp(PlayerLocation, BulletLocation, MidpointAlpha) + SideDirection * SideOffset;
+				ProjectPointToNavigation(Candidate);
+				return Candidate;
+			},
+			FallbackTarget);
 	}
 
-	if (CurrentRole == EOBEnemyRole::BulletBlocker)
+	return CalculateFlankerTarget(false);
+}
+
+FVector AOBEnemy::FindUnclaimedTarget(const TFunction<FVector(int32)>& CandidateGenerator, const FVector& FallbackTarget)
+{
+	FVector BestCandidate = FallbackTarget;
+	float BestSeparationSquared = -1.0f;
+	for (int32 Attempt = 0; Attempt < TargetReservationAttempts; ++Attempt)
 	{
-		if (const AOBBulletPickup* BulletPickup = FindActiveBulletPickup())
+		const FVector Candidate = CandidateGenerator(Attempt);
+		if (!IsTargetClaimedByAnotherEnemy(Candidate))
 		{
-			const FVector PlayerLocation = PlayerTarget->GetActorLocation();
-			const FVector BulletLocation = BulletPickup->GetActorLocation();
-			FVector BlockingTarget = FMath::Lerp(PlayerLocation, BulletLocation, BulletBlockerPathFraction);
-			ProjectPointToNavigation(BlockingTarget);
-			return BlockingTarget;
+			return Candidate;
+		}
+
+		float ClosestClaimSquared = TNumericLimits<float>::Max();
+		TArray<AOBEnemy*> LiveEnemies;
+		GetLiveEnemies(LiveEnemies);
+		for (const AOBEnemy* Enemy : LiveEnemies)
+		{
+			if (Enemy != this && !Enemy->CurrentApproachTarget.IsNearlyZero())
+			{
+				ClosestClaimSquared = FMath::Min(
+					ClosestClaimSquared,
+					FVector::DistSquared2D(Candidate, Enemy->CurrentApproachTarget));
+			}
+		}
+		if (ClosestClaimSquared > BestSeparationSquared)
+		{
+			BestSeparationSquared = ClosestClaimSquared;
+			BestCandidate = Candidate;
 		}
 	}
 
-	FVector PlayerForward = PlayerTarget->GetActorForwardVector().GetSafeNormal2D();
+	return BestCandidate;
+}
+
+bool AOBEnemy::IsTargetClaimedByAnotherEnemy(const FVector& Candidate) const
+{
+	if (MinDistanceBetweenEnemyTargets <= 0.0f)
+	{
+		return false;
+	}
+
+	TArray<AOBEnemy*> LiveEnemies;
+	GetLiveEnemies(LiveEnemies);
+	for (const AOBEnemy* Enemy : LiveEnemies)
+	{
+		if (Enemy == this || Enemy->CurrentApproachTarget.IsNearlyZero())
+		{
+			continue;
+		}
+		if (FVector::DistSquared2D(Candidate, Enemy->CurrentApproachTarget) < FMath::Square(MinDistanceBetweenEnemyTargets))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+FVector AOBEnemy::GetPlayerMovementDirection() const
+{
+	if (!PlayerTarget)
+	{
+		return FVector::ForwardVector;
+	}
+
+	FVector MovementDirection = PlayerTarget->GetVelocity().GetSafeNormal2D();
+	if (!MovementDirection.IsNearlyZero())
+	{
+		return MovementDirection;
+	}
+
 	if (const AController* PlayerController = PlayerTarget->GetController())
 	{
-		PlayerForward = FRotationMatrix(FRotator(0.0f, PlayerController->GetControlRotation().Yaw, 0.0f)).GetUnitAxis(EAxis::X).GetSafeNormal2D();
+		MovementDirection = FRotationMatrix(FRotator(0.0f, PlayerController->GetControlRotation().Yaw, 0.0f)).GetUnitAxis(EAxis::X).GetSafeNormal2D();
 	}
-	const FVector FlankDirection = PlayerForward.RotateAngleAxis(FlankerSlotAngleDegrees, FVector::UpVector).GetSafeNormal2D();
-	FVector Target = PlayerTarget->GetActorLocation() + FlankDirection * RushFlankerDistance;
-	ProjectPointToNavigation(Target);
-	return Target;
+
+	return MovementDirection.IsNearlyZero()
+		? PlayerTarget->GetActorForwardVector().GetSafeNormal2D()
+		: MovementDirection;
 }
 
 AOBBulletPickup* AOBEnemy::FindActiveBulletPickup() const
@@ -1110,9 +1384,47 @@ void AOBEnemy::UpdateSimpleLocomotionAnimation()
 	}
 }
 
+float AOBEnemy::GetNextRepathInterval() const
+{
+	float IntervalMin = ChaserRepathIntervalMin;
+	float IntervalMax = ChaserRepathIntervalMax;
+	if (CurrentRole == EOBEnemyRole::Flanker)
+	{
+		IntervalMin = FlankerRepathIntervalMin;
+		IntervalMax = FlankerRepathIntervalMax;
+	}
+	else if (CurrentRole == EOBEnemyRole::BulletBlocker)
+	{
+		IntervalMin = BlockerRepathIntervalMin;
+		IntervalMax = BlockerRepathIntervalMax;
+	}
+	return FMath::FRandRange(IntervalMin, IntervalMax) * RepathTimeJitter;
+}
+
+void AOBEnemy::ScheduleNextMoveRequest(float InitialDelay)
+{
+	if (bDead || !GetWorld())
+	{
+		return;
+	}
+
+	const float Delay = InitialDelay >= 0.0f ? InitialDelay : GetNextRepathInterval();
+	GetWorldTimerManager().SetTimer(
+		MoveTimerHandle,
+		this,
+		&AOBEnemy::RequestMove,
+		FMath::Max(Delay, 0.01f),
+		false);
+}
+
 void AOBEnemy::RequestMove()
 {
-	if (bDead || bStunned)
+	if (bDead)
+	{
+		return;
+	}
+	ScheduleNextMoveRequest();
+	if (bStunned)
 	{
 		return;
 	}
@@ -1226,6 +1538,106 @@ void AOBEnemy::DrawDetectionRadiusDebug() const
 	DrawDebugPoint(GetWorld(), Center, 9.0f, RadiusColor, false, 0.0f, 0);
 }
 
+float AOBEnemy::GetEffectiveAttackRadius() const
+{
+	const UCapsuleComponent* EnemyCapsule = GetCapsuleComponent();
+	const UCapsuleComponent* PlayerCapsule = PlayerTarget ? PlayerTarget->GetCapsuleComponent() : nullptr;
+	const float EnemyRadius = EnemyCapsule ? EnemyCapsule->GetScaledCapsuleRadius() : 0.0f;
+	const float PlayerRadius = PlayerCapsule ? PlayerCapsule->GetScaledCapsuleRadius() : 0.0f;
+	const float ConfiguredRadius = EnemyType == EOBEnemyType::Heavy
+		? HeavyAttackRadius
+		: FastAttackRadius;
+	return FMath::Max(ConfiguredRadius, EnemyRadius + PlayerRadius + TouchKillExtraMargin);
+}
+
+void AOBEnemy::DrawAttackRadiusDebug() const
+{
+	if (!bDrawAttackRadius || bDead || !GetWorld())
+	{
+		return;
+	}
+
+	const float AttackRadius = GetEffectiveAttackRadius();
+	if (AttackRadius <= 0.0f)
+	{
+		return;
+	}
+
+	const FVector Center = GetActorLocation() + FVector::UpVector * 10.0f;
+	const FColor RadiusColor = EnemyType == EOBEnemyType::Heavy
+		? FColor(255, 48, 24)
+		: FColor(255, 180, 32);
+	DrawDebugCircle(
+		GetWorld(),
+		Center,
+		AttackRadius,
+		64,
+		RadiusColor,
+		false,
+		0.0f,
+		0,
+		AttackRadiusDebugThickness,
+		FVector::ForwardVector,
+		FVector::RightVector,
+		false);
+	DrawDebugString(
+		GetWorld(),
+		Center + FVector::UpVector * 24.0f,
+		FString::Printf(TEXT("Attack %.0f cm"), AttackRadius),
+		nullptr,
+		RadiusColor,
+		0.0f,
+		false,
+		1.0f);
+}
+
+void AOBEnemy::DrawAIRoleTargetDebug() const
+{
+	if (!bDrawAIRoleTargets || bDead || !GetWorld() || CurrentApproachTarget.IsNearlyZero())
+	{
+		return;
+	}
+
+	FColor RoleColor = FColor::White;
+	switch (CurrentRole)
+	{
+	case EOBEnemyRole::Chaser:
+		RoleColor = FColor::Red;
+		break;
+	case EOBEnemyRole::Flanker:
+		RoleColor = FColor::Yellow;
+		break;
+	case EOBEnemyRole::BulletBlocker:
+		RoleColor = FColor::Cyan;
+		break;
+	default:
+		break;
+	}
+
+	const FVector LineStart = GetActorLocation() + FVector::UpVector * 35.0f;
+	const FVector Target = CurrentApproachTarget + FVector::UpVector * 20.0f;
+	DrawDebugLine(GetWorld(), LineStart, Target, RoleColor, false, 0.0f, 0, 2.0f);
+	DrawDebugSphere(GetWorld(), Target, AIRoleTargetDebugSize, 12, RoleColor, false, 0.0f, 0, 2.0f);
+	DrawDebugString(
+		GetWorld(),
+		GetActorLocation() + FVector::UpVector * 135.0f,
+		GetAIRoleName(CurrentRole),
+		nullptr,
+		RoleColor,
+		0.0f,
+		false,
+		1.1f);
+	DrawDebugString(
+		GetWorld(),
+		Target + FVector::UpVector * 24.0f,
+		FString::Printf(TEXT("%s / %s"), GetAIStateName(CurrentAIState), GetAIRoleName(CurrentRole)),
+		nullptr,
+		RoleColor,
+		0.0f,
+		false,
+		1.0f);
+}
+
 void AOBEnemy::TryTouchKill()
 {
 	if (bDead || !PlayerTarget || PlayerTarget->IsDead())
@@ -1237,11 +1649,7 @@ void AOBEnemy::TryTouchKill()
 		return;
 	}
 
-	const UCapsuleComponent* EnemyCapsule = GetCapsuleComponent();
-	const UCapsuleComponent* PlayerCapsule = PlayerTarget->GetCapsuleComponent();
-	const float EnemyRadius = EnemyCapsule ? EnemyCapsule->GetScaledCapsuleRadius() : 0.0f;
-	const float PlayerRadius = PlayerCapsule ? PlayerCapsule->GetScaledCapsuleRadius() : 0.0f;
-	const float EffectiveTouchKillRadius = FMath::Max(TouchKillRadius, EnemyRadius + PlayerRadius + TouchKillExtraMargin);
+	const float EffectiveAttackRadius = GetEffectiveAttackRadius();
 
 	if (!bCanTouchKillFromBehind)
 	{
@@ -1258,7 +1666,7 @@ void AOBEnemy::TryTouchKill()
 		}
 	}
 
-	if (FVector::DistSquared2D(GetActorLocation(), PlayerTarget->GetActorLocation()) <= FMath::Square(EffectiveTouchKillRadius))
+	if (FVector::DistSquared2D(GetActorLocation(), PlayerTarget->GetActorLocation()) <= FMath::Square(EffectiveAttackRadius))
 	{
 		PlayerTarget->DieWithReason(EnemyType == EOBEnemyType::Heavy
 			? FText::FromString(TEXT("Crushed by Heavy"))

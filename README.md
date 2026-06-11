@@ -94,8 +94,68 @@ Pickup имеет мягкое притягивание на близкой ди
 | Категория | Основные поля |
 | --- | --- |
 | `OneBulletSettings|AI State|Transition` | `Rush Transition Delay Min/Max` |
-| `OneBulletSettings|AI State|Cautious` | role chances, speed min/max, variance, Flanker start/min distance, compression speed |
-| `OneBulletSettings|AI State|Rush` | role chances, speed min/max, variance, Flanker distance, Bullet Blocker acceptance radius/path fraction |
+| `OneBulletSettings|AI State|Cautious` | role chances, speed min/max, variance, Flanker max/min distance, compression speed |
+| `OneBulletSettings|AI State|Rush` | role chances, speed min/max, variance, Flanker distance min/max, Bullet Blocker acceptance radius |
+| `OneBulletSettings|AI State|Debug` | `Draw AI Role Targets`, размер маркера цели |
+
+### Enemy Roles
+
+Роли реализованы отдельными функциями расчёта цели: `CalculateChaserTarget`, `CalculateFlankerTarget`, `CalculateBulletBlockerTarget`. Общая отправка navigation request остаётся в `RequestMove`, поэтому логика движения не дублируется.
+
+| Роль | Цель |
+| --- | --- |
+| `Chaser` | текущая позиция игрока; преследование выполняется через `MoveToActor` |
+| `Flanker` | случайно выбранная левая или правая точка относительно направления движения/взгляда игрока; offset случайно фиксируется в диапазоне `300-600` при назначении роли |
+| `BulletBlocker` | точный `MidPoint(PlayerLocation, BulletLocation)` |
+
+`BulletBlocker` участвует в распределении ролей только если активный bullet pickup уже существует. Если pickup исчез до обновления состояния, используется безопасная Flanker-цель, а возврат пули переводит врага обратно в `Cautious`.
+
+Для проверки включить `Draw AI Role Targets` в Enemy BP:
+
+| Цвет | Роль |
+| --- | --- |
+| красный | `Chaser` |
+| жёлтый | `Flanker` |
+| голубой | `BulletBlocker` |
+
+Debug draw показывает линию от врага до navigation target, сферу цели и подпись `State / Role`.
+
+### Group Movement Diversity
+
+Распределение ролей выполняется общей функцией `AssignEnemyRoles()`:
+
+- `1` живой враг: всегда `Chaser`;
+- `2` живых врага: минимум один `Chaser`, второй получает доступную роль состояния;
+- `3+` врага: используются проценты `Cautious` / `Rush`, но минимум один `Chaser` гарантирован;
+- роли пересчитываются при появлении врага, смерти и смене AI state, а не каждый кадр.
+
+`Chaser` всегда использует `MoveToActor(Player)` без бокового offset. `Flanker` получает отдельный угловой слот сбоку или сзади, случайный радиус и небольшое смещение. `BulletBlocker` выбирает собственную точку рядом с линией между игроком и пулей.
+
+Не-Chaser цели используют reservation-проверку. Если новая точка находится ближе `Min Distance Between Enemy Targets` к уже назначенной цели, выполняется новая попытка. При исчерпании попыток выбирается кандидат с наибольшим разделением.
+
+Настройки в `OneBulletSettings|AI State`:
+
+| Категория | Параметры по умолчанию |
+| --- | --- |
+| `Movement Diversity` | target spacing `300 cm`, flank radius `500-900 cm`, random offset `100-250 cm`, `6` attempts |
+| `Repath` Chaser | `0.2-0.5 s` |
+| `Repath` Flanker | `0.8-1.5 s` |
+| `Repath` Bullet Blocker | `0.4-0.8 s` |
+
+Каждый враг использует индивидуальный one-shot repath timer с дополнительным случайным множителем, поэтому толпа не обновляет пути одновременно. `Draw AI Role Targets` показывает цвет роли над врагом, линию и сферу текущей target position.
+
+#### Flanker Compression
+
+Flanker закрепляется в одном из четырёх секторов: left, right, rear-left или rear-right. Сектор не меняется при обычном перераспределении ролей. Направление цели фиксируется на `Flank Side Lock Duration` (`2-4 s`), после чего мягко обновляется относительно движения игрока без перескока на противоположную сторону.
+
+Радиус цели уменьшается непрерывно:
+
+| State | Start Radius | Min Radius | Approach Speed |
+| --- | ---: | ---: | ---: |
+| `Cautious` | `900 cm` | `450 cm` | `80-150 cm/s` |
+| `Rush` | `700 cm` | `250 cm` | `200-350 cm/s` |
+
+Новая flank-цель не может оказаться дальше текущей дистанции врага до игрока более чем на `Max Allowed Flank Distance Increase` (`100 cm`). Случайность ограничена небольшим боковым offset внутри закреплённого сектора. Когда Flanker достигает минимального радиуса плюс `Flank Close Pressure Range`, обход прекращается и враг начинает напрямую давить игрока, исключая бесконечное orbit movement.
 
 ### Fast Enemy
 
@@ -107,9 +167,28 @@ Pickup имеет мягкое притягивание на близкой ди
 ### Heavy Enemy
 
 - Движется медленнее.
-- Убивает при контакте.
+- Контролирует ближнюю зону: attack radius по умолчанию `200 cm`, вдвое больше Fast `100 cm`.
+- Убивает игрока при входе в эффективный attack radius.
 - Почти не отлетает от пинка, но получает короткий stun.
 - Перекрывает путь к потерянной пуле и контролирует пространство.
+
+#### Attack Radius
+
+Настройки находятся в `BP_OBEnemy_Fast` / `BP_OBEnemy_Heavy`, категория `OneBulletSettings|Attack Radius`:
+
+| Поле | Значение |
+| --- | ---: |
+| `Fast Attack Radius` | `100 cm` |
+| `Heavy Attack Radius` | `200 cm` |
+| `Touch Kill Extra Margin` | дополнительный запас для физического контакта капсул |
+| `Draw Attack Radius` | включает визуализацию итоговой зоны атаки |
+| `Attack Radius Debug Thickness` | толщина debug-круга |
+
+Урон и debug draw используют один getter `GetEffectiveAttackRadius`. Итоговый радиус не может быть меньше суммы радиусов капсул игрока/врага и `Touch Kill Extra Margin`. Размер collision capsule Heavy остаётся прежним (`58 cm` radius): увеличение attack radius меняет зону угрозы, но не физическую навигационную коллизию.
+
+При включённом `Draw Attack Radius` Fast показывает оранжевый круг, Heavy - красный. Подпись над врагом отображает фактический радиус в сантиметрах.
+
+Для Heavy включено `Can Touch Kill From Behind`, поэтому красный круг является полноценной зоной угрозы на 360 градусов. Fast сохраняет фронтальное ограничение контактной атаки.
 
 Враги стараются подходить к игроку с разных направлений. По умолчанию спавн за спиной и убийство из явной слепой зоны отключены, потому что основной режим игры - first person.
 

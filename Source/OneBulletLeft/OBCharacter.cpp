@@ -663,7 +663,7 @@ bool AOBCharacter::EvaluateDodgeDirection(const FVector& Direction, float& OutSc
 		const FVector ClosestPointOnPath = FMath::ClosestPointOnSegment(EnemyLocation, Start, End);
 		const float PathDistance = FVector::Dist2D(EnemyLocation, ClosestPointOnPath);
 		const float EndDistance = FVector::Dist2D(EnemyLocation, End);
-		const float RequiredClearance = DodgeEnemyClearance + Enemy->TouchKillRadius;
+		const float RequiredClearance = DodgeEnemyClearance + Enemy->GetEffectiveAttackRadius();
 
 		if (PathDistance < RequiredClearance || EndDistance < RequiredClearance)
 		{
