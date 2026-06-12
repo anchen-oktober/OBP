@@ -347,6 +347,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Events")
 	void TriggerSpawnFeedback();
 
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Spawning")
+	void BeginSpawnProtection(float WarningDuration, float GracePeriod);
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Spawning")
+	bool IsSpawnProtected() const { return bSpawnProtected; }
+
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Events")
 	void Disappear();
 
@@ -397,6 +403,8 @@ protected:
 	bool bRushTransitionPending = false;
 	bool bKickKnockbackActive = false;
 	bool bHasFlankSetup = false;
+	bool bSpawnProtected = false;
+	bool bSpawnWarningActive = false;
 	FVector PatrolOrigin = FVector::ZeroVector;
 	FVector CurrentPatrolTarget = FVector::ZeroVector;
 	FVector CurrentApproachTarget = FVector::ZeroVector;
@@ -426,8 +434,12 @@ protected:
 	FTimerHandle StunTimerHandle;
 	FTimerHandle MoveTimerHandle;
 	FTimerHandle RushTransitionTimerHandle;
+	FTimerHandle SpawnWarningTimerHandle;
+	FTimerHandle SpawnGraceTimerHandle;
 
 	void ResumeAfterStun();
+	void FinishSpawnWarning();
+	void FinishSpawnProtection();
 	void BeginKickKnockback(const FVector& Direction, float Distance, float Duration, float StunDuration);
 	void UpdateKickKnockback(float DeltaSeconds);
 	void RequestMove();

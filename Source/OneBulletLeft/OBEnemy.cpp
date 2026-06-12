@@ -119,6 +119,10 @@ void AOBEnemy::Tick(float DeltaSeconds)
 		}
 		return;
 	}
+	if (bSpawnWarningActive)
+	{
+		return;
+	}
 
 	CurrentStateElapsed += DeltaSeconds;
 	if (CurrentRole == EOBEnemyRole::Flanker)
@@ -206,6 +210,8 @@ void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
 	OnDeathReported.Broadcast(this);
 	GetWorldTimerManager().ClearTimer(MoveTimerHandle);
 	GetWorldTimerManager().ClearTimer(RushTransitionTimerHandle);
+	GetWorldTimerManager().ClearTimer(SpawnWarningTimerHandle);
+	GetWorldTimerManager().ClearTimer(SpawnGraceTimerHandle);
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetCharacterMovement()->StopMovementImmediately();
 	GetCharacterMovement()->DisableMovement();
@@ -277,6 +283,89 @@ void AOBEnemy::TriggerSpawnFeedback()
 	OnEnemySpawned(EnemyType, GetActorLocation());
 }
 
+void AOBEnemy::BeginSpawnProtection(float WarningDuration, float GracePeriod)
+{
+	if (bDead || !GetWorld())
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(SpawnWarningTimerHandle);
+	GetWorldTimerManager().ClearTimer(SpawnGraceTimerHandle);
+	GetWorldTimerManager().ClearTimer(MoveTimerHandle);
+	bSpawnProtected = true;
+	bSpawnWarningActive = true;
+	bUsingDirectMovementFallback = false;
+	SetActorHiddenInGame(true);
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->DisableMovement();
+	if (AAIController* AI = Cast<AAIController>(GetController()))
+	{
+		AI->StopMovement();
+	}
+
+	const float SafeWarningDuration = FMath::Max(WarningDuration, 0.0f);
+	const float SafeGracePeriod = FMath::Max(GracePeriod, 0.0f);
+	UE_LOG(
+		LogOBEnemyAI,
+		Log,
+		TEXT("%s spawn warning started: hidden for %.2fs, grace %.2fs"),
+		*GetName(),
+		SafeWarningDuration,
+		SafeGracePeriod);
+	if (SafeWarningDuration <= KINDA_SMALL_NUMBER)
+	{
+		FinishSpawnWarning();
+	}
+	else
+	{
+		GetWorldTimerManager().SetTimer(
+			SpawnWarningTimerHandle,
+			this,
+			&AOBEnemy::FinishSpawnWarning,
+			SafeWarningDuration,
+			false);
+	}
+
+	if (SafeGracePeriod <= KINDA_SMALL_NUMBER)
+	{
+		FinishSpawnProtection();
+	}
+	else
+	{
+		GetWorldTimerManager().SetTimer(
+			SpawnGraceTimerHandle,
+			this,
+			&AOBEnemy::FinishSpawnProtection,
+			SafeWarningDuration + SafeGracePeriod,
+			false);
+	}
+}
+
+void AOBEnemy::FinishSpawnWarning()
+{
+	if (bDead || !bSpawnWarningActive)
+	{
+		return;
+	}
+
+	bSpawnWarningActive = false;
+	SetActorHiddenInGame(false);
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	ApplyAIStateSpeed();
+	TriggerSpawnFeedback();
+	ScheduleNextMoveRequest(0.01f);
+	UE_LOG(LogOBEnemyAI, Log, TEXT("%s became visible with spawn protection active"), *GetName());
+}
+
+void AOBEnemy::FinishSpawnProtection()
+{
+	bSpawnProtected = false;
+	UE_LOG(LogOBEnemyAI, Log, TEXT("%s spawn protection ended"), *GetName());
+}
+
 void AOBEnemy::Disappear()
 {
 	if (bDisappearing)
@@ -285,6 +374,8 @@ void AOBEnemy::Disappear()
 	}
 
 	bDisappearing = true;
+	GetWorldTimerManager().ClearTimer(SpawnWarningTimerHandle);
+	GetWorldTimerManager().ClearTimer(SpawnGraceTimerHandle);
 	OnEnemyDisappearing(EnemyType, GetActorLocation());
 	Destroy();
 }
@@ -1413,7 +1504,7 @@ float AOBEnemy::GetNextRepathInterval() const
 
 void AOBEnemy::ScheduleNextMoveRequest(float InitialDelay)
 {
-	if (bDead || !GetWorld())
+	if (bDead || bSpawnWarningActive || !GetWorld())
 	{
 		return;
 	}
@@ -1429,7 +1520,7 @@ void AOBEnemy::ScheduleNextMoveRequest(float InitialDelay)
 
 void AOBEnemy::RequestMove()
 {
-	if (bDead)
+	if (bDead || bSpawnWarningActive)
 	{
 		return;
 	}
@@ -1650,7 +1741,7 @@ void AOBEnemy::DrawAIRoleTargetDebug() const
 
 void AOBEnemy::TryTouchKill()
 {
-	if (bDead || !PlayerTarget || PlayerTarget->IsDead())
+	if (bDead || bSpawnProtected || !PlayerTarget || PlayerTarget->IsDead())
 	{
 		return;
 	}

@@ -5,6 +5,8 @@
 #include "OBEnemy.h"
 #include "OBWaveManager.generated.h"
 
+class UNiagaraSystem;
+
 UENUM(BlueprintType)
 enum class EOBWaveState : uint8
 {
@@ -50,6 +52,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(
 	LivingEnemies);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOBWaveEnemyDiedSignature, AOBEnemy*, Enemy, int32, LivingEnemies);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOBWaveEnemyCountChangedSignature, int32, LivingEnemies);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
+	FOBWaveSpawnWarningSignature,
+	EOBEnemyType,
+	EnemyType,
+	FVector,
+	SpawnLocation,
+	float,
+	WarningDuration);
 
 UCLASS(Blueprintable, PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API AOBWaveManager : public AActor
@@ -129,14 +139,38 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning")
 	TArray<FVector> SpawnPoints;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Visibility")
-	bool bSpawnEnemiesOnlyInFrontOfPlayer = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="800.0", ClampMax="1200.0", UIMin="800.0", UIMax="1200.0"))
+	float MinimumSpawnDistanceFromPlayer = 1000.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Visibility")
-	float FrontSpawnMinDot = 0.35f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety")
+	bool bPreferSpawnPointsOutsidePlayerView = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Visibility")
-	bool bAllowAnySpawnIfNoFrontPoint = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="0.0", UIMin="0.0", UIMax="256.0"))
+	float SpawnScreenEdgePadding = 64.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="-1.0", ClampMax="1.0"))
+	float DirectViewMinDot = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Warning", meta=(ClampMin="0.3", ClampMax="0.7", UIMin="0.3", UIMax="0.7"))
+	float SpawnWarningDuration = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Warning", meta=(ClampMin="0.3", ClampMax="0.5", UIMin="0.3", UIMax="0.5"))
+	float SpawnGracePeriod = 0.4f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Warning")
+	TObjectPtr<UNiagaraSystem> SpawnWarningEffect;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Warning")
+	bool bUseSpawnWarningLight = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Warning", meta=(EditCondition="bUseSpawnWarningLight", ClampMin="0.0"))
+	float SpawnWarningLightIntensity = 12000.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Warning", meta=(EditCondition="bUseSpawnWarningLight", ClampMin="0.0"))
+	float SpawnWarningLightRadius = 450.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Warning", meta=(EditCondition="bUseSpawnWarningLight"))
+	FLinearColor SpawnWarningLightColor = FLinearColor(1.0f, 0.12f, 0.02f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Debug")
 	bool bEnableWaveDebugLogs = true;
@@ -179,6 +213,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category="OneBulletSettings|Waves|Events")
 	FOBWaveEnemyCountChangedSignature OnEnemyCountChanged;
+
+	UPROPERTY(BlueprintAssignable, Category="OneBulletSettings|Waves|Events")
+	FOBWaveSpawnWarningSignature OnSpawnWarning;
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Waves")
 	void StartWaves();
@@ -231,6 +268,7 @@ private:
 	void CheckWaveCompletion();
 	void EnterIntermission();
 	bool TryChooseSpawnLocation(FVector& OutLocation) const;
+	void ShowSpawnWarning(EOBEnemyType Type, const FVector& SpawnLocation);
 	void RefreshLivingEnemyCount();
 	FRuntimeWave BuildWave(int32 WaveNumber) const;
 	float ResolveInitialWaitDuration() const;

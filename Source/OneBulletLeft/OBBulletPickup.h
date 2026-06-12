@@ -10,6 +10,7 @@ class UPointLightComponent;
 class USoundBase;
 class UNiagaraSystem;
 class UMaterialInterface;
+class UMaterialInstanceDynamic;
 class USceneComponent;
 class AOBCharacter;
 
@@ -45,14 +46,38 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
 	TObjectPtr<UPointLightComponent> BeaconLight;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
+	TObjectPtr<UStaticMeshComponent> GlowAura;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
+	TObjectPtr<UStaticMeshComponent> VerticalBeam;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio")
 	TObjectPtr<USoundBase> PickupSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio|Landing")
+	TObjectPtr<USoundBase> LandingMetalSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio|Landing")
+	TObjectPtr<USoundBase> LandingMysticSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio|Landing", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float LandingSoundVolume = 0.85f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Audio|Landing", meta=(ClampMin="0.0", ClampMax="0.5"))
+	float LandingMysticEchoDelay = 0.12f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pickup|Feedback")
 	TObjectPtr<UNiagaraSystem> PickupEffect;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Trail")
 	TObjectPtr<UNiagaraSystem> TrailNiagaraSystem;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Trail")
+	bool bUseSacredDropTrail = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Trail", meta=(EditCondition="bUseSacredDropTrail"))
+	TObjectPtr<UNiagaraSystem> SacredDropTrailSystem;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Trail")
 	FName TrailStartParameter = TEXT("User.TraceStart");
@@ -75,14 +100,44 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Trail")
 	TObjectPtr<UMaterialInterface> TravelingBulletMaterial;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Readability|Materials")
+	TObjectPtr<UMaterialInterface> GlowMaterial;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Readability|Beam", meta=(DisplayName="Material"))
+	TObjectPtr<UMaterialInterface> SacredBeamMaterial;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Readability")
+	FLinearColor SacredLightColor = FLinearColor(1.0f, 0.55f, 0.08f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Readability", meta=(ClampMin="0.1", UIMin="0.5", UIMax="3.0"))
+	float GlowAuraScale = 1.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Readability|Beam", meta=(DisplayName="Color"))
+	FLinearColor VerticalBeamColor = FLinearColor(1.0f, 0.55f, 0.08f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Readability|Beam", meta=(DisplayName="Intensity", ClampMin="0.0", UIMin="0.0", UIMax="20.0"))
+	float VerticalBeamIntensity = 4.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Readability|Beam", meta=(DisplayName="Height", ClampMin="100.0", UIMin="400.0", UIMax="2000.0"))
+	float VerticalBeamHeight = 1200.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Readability|Beam", meta=(DisplayName="Thickness", ClampMin="1.0", UIMin="4.0", UIMax="80.0"))
+	float VerticalBeamWidth = 24.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Readability|Beam", meta=(DisplayName="Pulse Amount (Brightness + Thickness)", ClampMin="0.0", ClampMax="1.0", UIMin="0.0", UIMax="0.5"))
+	float VerticalBeamPulseAmount = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Readability|Beam", meta=(DisplayName="Pulse Speed", ClampMin="0.0", UIMin="0.0", UIMax="10.0"))
+	float VerticalBeamPulseSpeed = 2.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Trail", meta=(ClampMin="0.01", UIMin="0.03", UIMax="0.4"))
 	float TravelingBulletScale = 0.1f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Trail")
-	FLinearColor TravelingBulletLightColor = FLinearColor(0.16f, 0.82f, 1.0f);
+	FLinearColor TravelingBulletLightColor = FLinearColor(1.0f, 0.45f, 0.05f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Trail", meta=(ClampMin="0.0", UIMin="0.0", UIMax="10000.0"))
-	float TravelingBulletLightIntensity = 4200.0f;
+	float TravelingBulletLightIntensity = 6500.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Presentation")
 	bool bUseNativePresentationAnimation = true;
@@ -115,13 +170,13 @@ protected:
 	float PulseScale = 0.12f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Presentation")
-	float BeaconIntensity = 7200.0f;
+	float BeaconIntensity = 9800.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Presentation")
-	float BeaconPulseAmount = 2200.0f;
+	float BeaconPulseAmount = 3200.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Presentation", meta=(ClampMin="0.0", UIMin="200.0", UIMax="1200.0"))
-	float BeaconAttenuationRadius = 780.0f;
+	float BeaconAttenuationRadius = 1050.0f;
 
 	UFUNCTION(BlueprintNativeEvent, Category="OneBulletSettings|Presentation")
 	void UpdatePickupPresentation(float DeltaSeconds, float RunningTime);
@@ -133,9 +188,22 @@ protected:
 	void OnPickupOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
 
 	void Collect(AOBCharacter* Player);
+	void SetWorldReadabilityVisible(bool bVisible);
+	void ApplyReadabilitySettings();
+	void UpdateReadabilityPresentation(float RunningTime);
+	void ApplyBeamMaterialColor(float IntensityMultiplier = 1.0f);
+	void PlayLandingFeedback();
+	void PlayLandingMysticEcho();
+	UNiagaraSystem* ResolveDropTrailSystem() const;
 
 	bool bCollected = false;
 	bool bAwaitingIncomingFlight = false;
+	bool bLandingFeedbackPlayed = false;
+	FTimerHandle LandingEchoTimerHandle;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> GlowMaterialInstance;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> BeamMaterialInstance;
 	TWeakObjectPtr<USceneComponent> FlightDestinationParent;
 	FName FlightDestinationSocket = NAME_None;
 	FTransform FlightDestinationRelativeTransform = FTransform::Identity;

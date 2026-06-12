@@ -1,8 +1,13 @@
 #include "OBWaveManager.h"
 
+#include "Camera/PlayerCameraManager.h"
+#include "Components/PointLightComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/PointLight.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "NiagaraFunctionLibrary.h"
 #include "OBCharacter.h"
 #include "OBGameState.h"
 
@@ -351,14 +356,19 @@ AOBEnemy* AOBWaveManager::SpawnEnemy(EOBEnemyType Type)
 		return nullptr;
 	}
 
-	Enemy->TriggerSpawnFeedback();
+	const float SafeWarningDuration = FMath::Clamp(SpawnWarningDuration, 0.3f, 0.7f);
+	const float SafeGracePeriod = FMath::Clamp(SpawnGracePeriod, 0.3f, 0.5f);
+	Enemy->BeginSpawnProtection(SafeWarningDuration, SafeGracePeriod);
+	ShowSpawnWarning(Type, SpawnLocation);
 	OnEnemySpawned.Broadcast(Enemy, Type, SpawnLocation, LivingEnemyCount);
 	DebugWaveMessage(
 		FString::Printf(
-			TEXT("Wave %d spawned %s at %s; living: %d"),
+			TEXT("Wave %d warning for %s at %s; appears in %.2fs, protected for %.2fs; living: %d"),
 			CurrentWaveNumber,
 			Type == EOBEnemyType::Heavy ? TEXT("Heavy") : TEXT("Fast"),
 			*SpawnLocation.ToCompactString(),
+			SafeWarningDuration,
+			SafeGracePeriod,
 			LivingEnemyCount),
 		FColor::Yellow);
 	return Enemy;
@@ -372,44 +382,169 @@ bool AOBWaveManager::TryChooseSpawnLocation(FVector& OutLocation) const
 	}
 
 	const AOBCharacter* Player = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0));
-	if (!bSpawnEnemiesOnlyInFrontOfPlayer || !Player)
+	if (!Player)
 	{
 		OutLocation = SpawnPoints[FMath::RandRange(0, SpawnPoints.Num() - 1)];
 		return true;
 	}
 
-	TArray<FVector> FrontSpawnPoints;
 	const FVector PlayerLocation = Player->GetActorLocation();
-	FVector PlayerForward = Player->GetActorForwardVector().GetSafeNormal2D();
-	if (const AController* PlayerController = Player->GetController())
+	APlayerController* PlayerController = Cast<APlayerController>(Player->GetController());
+	const APlayerCameraManager* CameraManager = PlayerController ? PlayerController->PlayerCameraManager : nullptr;
+	const FVector CameraLocation = CameraManager ? CameraManager->GetCameraLocation() : PlayerLocation;
+	FVector CameraForward = CameraManager
+		? CameraManager->GetCameraRotation().Vector().GetSafeNormal()
+		: Player->GetActorForwardVector().GetSafeNormal();
+	if (CameraForward.IsNearlyZero())
 	{
-		PlayerForward = FRotationMatrix(FRotator(0.0f, PlayerController->GetControlRotation().Yaw, 0.0f))
-			.GetUnitAxis(EAxis::X)
-			.GetSafeNormal2D();
+		CameraForward = FVector::ForwardVector;
 	}
+
+	FVector ArenaCenter = FVector::ZeroVector;
+	for (const FVector& SpawnPoint : SpawnPoints)
+	{
+		ArenaCenter += SpawnPoint;
+	}
+	ArenaCenter /= static_cast<float>(SpawnPoints.Num());
+
+	float MaxArenaRadius = 1.0f;
+	for (const FVector& SpawnPoint : SpawnPoints)
+	{
+		MaxArenaRadius = FMath::Max(MaxArenaRadius, FVector::Dist2D(SpawnPoint, ArenaCenter));
+	}
+
+	int32 ViewportSizeX = 0;
+	int32 ViewportSizeY = 0;
+	if (PlayerController)
+	{
+		PlayerController->GetViewportSize(ViewportSizeX, ViewportSizeY);
+	}
+
+	float BestScore = -MAX_flt;
+	bool bFoundCandidate = false;
+	bool bBestOnScreen = false;
+	bool bBestOccluded = false;
+	float BestDistance = 0.0f;
+	const float MinimumDistance = FMath::Clamp(MinimumSpawnDistanceFromPlayer, 800.0f, 1200.0f);
 
 	for (const FVector& SpawnPoint : SpawnPoints)
 	{
-		const FVector ToSpawn = (SpawnPoint - PlayerLocation).GetSafeNormal2D();
-		if (FVector::DotProduct(PlayerForward, ToSpawn) >= FrontSpawnMinDot)
+		const float DistanceToPlayer = FVector::Dist2D(SpawnPoint, PlayerLocation);
+		if (DistanceToPlayer < MinimumDistance)
 		{
-			FrontSpawnPoints.Add(SpawnPoint);
+			continue;
+		}
+
+		const FVector WarningLocation = SpawnPoint + FVector::UpVector * 90.0f;
+		const FVector ToSpawnFromCamera = (WarningLocation - CameraLocation).GetSafeNormal();
+		const float ViewDot = FVector::DotProduct(CameraForward, ToSpawnFromCamera);
+
+		FVector2D ScreenPosition = FVector2D::ZeroVector;
+		const bool bProjected = PlayerController
+			&& ViewportSizeX > 0
+			&& ViewportSizeY > 0
+			&& PlayerController->ProjectWorldLocationToScreen(WarningLocation, ScreenPosition, true);
+		const bool bOnScreen = bProjected
+			&& ScreenPosition.X >= SpawnScreenEdgePadding
+			&& ScreenPosition.Y >= SpawnScreenEdgePadding
+			&& ScreenPosition.X <= static_cast<float>(ViewportSizeX) - SpawnScreenEdgePadding
+			&& ScreenPosition.Y <= static_cast<float>(ViewportSizeY) - SpawnScreenEdgePadding;
+
+		FCollisionQueryParams VisibilityQuery(SCENE_QUERY_STAT(EnemySpawnVisibility), true, this);
+		VisibilityQuery.AddIgnoredActor(Player);
+		const bool bOccluded = GetWorld()->LineTraceTestByChannel(
+			CameraLocation,
+			WarningLocation,
+			ECC_Visibility,
+			VisibilityQuery);
+
+		const float EdgeScore = FVector::Dist2D(SpawnPoint, ArenaCenter) / MaxArenaRadius;
+		float Score = EdgeScore * 200.0f + FMath::Min(DistanceToPlayer / MinimumDistance, 2.0f) * 50.0f;
+		if (bPreferSpawnPointsOutsidePlayerView)
+		{
+			Score += bOnScreen ? 0.0f : 1000.0f;
+			Score += bOccluded ? 700.0f : 0.0f;
+			Score += ViewDot <= 0.0f ? 300.0f : 0.0f;
+			if (bOnScreen && !bOccluded && ViewDot >= DirectViewMinDot)
+			{
+				Score -= 1000.0f;
+			}
+		}
+		Score += FMath::FRandRange(0.0f, 25.0f);
+
+		if (!bFoundCandidate || Score > BestScore)
+		{
+			bFoundCandidate = true;
+			BestScore = Score;
+			OutLocation = SpawnPoint;
+			bBestOnScreen = bOnScreen;
+			bBestOccluded = bOccluded;
+			BestDistance = DistanceToPlayer;
 		}
 	}
 
-	if (FrontSpawnPoints.Num() > 0)
+	if (!bFoundCandidate)
 	{
-		OutLocation = FrontSpawnPoints[FMath::RandRange(0, FrontSpawnPoints.Num() - 1)];
-		return true;
+		DebugWaveMessage(
+			FString::Printf(
+				TEXT("Spawn delayed: all %d points are closer than %.0f units to the player."),
+				SpawnPoints.Num(),
+				MinimumDistance),
+			FColor::Orange);
+		return false;
 	}
 
-	if (bAllowAnySpawnIfNoFrontPoint)
+	DebugWaveMessage(
+		FString::Printf(
+			TEXT("Safe spawn selected at %s: distance=%.0f, on-screen=%s, occluded=%s"),
+			*OutLocation.ToCompactString(),
+			BestDistance,
+			bBestOnScreen ? TEXT("yes") : TEXT("no"),
+			bBestOccluded ? TEXT("yes") : TEXT("no")),
+		FColor::Silver);
+	return true;
+}
+
+void AOBWaveManager::ShowSpawnWarning(EOBEnemyType Type, const FVector& SpawnLocation)
+{
+	if (!GetWorld())
 	{
-		OutLocation = SpawnPoints[FMath::RandRange(0, SpawnPoints.Num() - 1)];
-		return true;
+		return;
 	}
 
-	return false;
+	const float SafeWarningDuration = FMath::Clamp(SpawnWarningDuration, 0.3f, 0.7f);
+	const FVector WarningLocation = SpawnLocation + FVector::UpVector * 70.0f;
+	OnSpawnWarning.Broadcast(Type, SpawnLocation, SafeWarningDuration);
+
+	if (SpawnWarningEffect)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			this,
+			SpawnWarningEffect,
+			WarningLocation);
+	}
+
+	if (bUseSpawnWarningLight)
+	{
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.Owner = this;
+		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		if (APointLight* WarningLight = GetWorld()->SpawnActor<APointLight>(
+			APointLight::StaticClass(),
+			WarningLocation,
+			FRotator::ZeroRotator,
+			SpawnParameters))
+		{
+			if (UPointLightComponent* LightComponent = Cast<UPointLightComponent>(WarningLight->GetLightComponent()))
+			{
+				LightComponent->SetIntensity(FMath::Max(SpawnWarningLightIntensity, 0.0f));
+				LightComponent->SetAttenuationRadius(FMath::Max(SpawnWarningLightRadius, 0.0f));
+				LightComponent->SetLightColor(SpawnWarningLightColor);
+				LightComponent->SetCastShadows(false);
+			}
+			WarningLight->SetLifeSpan(SafeWarningDuration);
+		}
+	}
 }
 
 void AOBWaveManager::ClearSpawnedEnemies()

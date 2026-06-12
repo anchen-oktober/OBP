@@ -54,6 +54,7 @@ private:
 
 	FVector StartLocation = FVector::ZeroVector;
 	FVector EndLocation = FVector::ZeroVector;
+	FVector PreviousLocation = FVector::ZeroVector;
 	float Duration = 0.12f;
 	float Elapsed = 0.0f;
 	float TailLife = 0.22f;

@@ -9,6 +9,8 @@
 #include "NiagaraSystem.h"
 #include "OBBulletPickup.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogOBBulletTrail, Log, All);
+
 AOBBulletTrailActor::AOBBulletTrailActor()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -33,7 +35,8 @@ AOBBulletTrailActor::AOBBulletTrailActor()
 
 	TravelingBulletLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("TravelingBulletLight"));
 	TravelingBulletLight->SetupAttachment(RootComponent);
-	TravelingBulletLight->SetAttenuationRadius(220.0f);
+	TravelingBulletLight->SetAttenuationRadius(360.0f);
+	TravelingBulletLight->SetCastShadows(false);
 }
 
 void AOBBulletTrailActor::InitializeTrail(
@@ -52,10 +55,19 @@ void AOBBulletTrailActor::InitializeTrail(
 {
 	StartLocation = TraceStart;
 	EndLocation = TraceEnd;
+	PreviousLocation = TraceStart;
 	Duration = FMath::Max(FlightDuration, 0.01f);
 	TailLife = FMath::Max(TailDuration, 0.0f);
 	DestinationPickup = InDestinationPickup;
 	SetActorLocationAndRotation(StartLocation, (EndLocation - StartLocation).Rotation());
+	UE_LOG(
+		LogOBBulletTrail,
+		Log,
+		TEXT("Bullet trail started: System=%s, Duration=%.2fs, Tail=%.2fs, Destination=%s"),
+		*GetNameSafe(TrailSystem),
+		Duration,
+		TailLife,
+		*GetNameSafe(DestinationPickup));
 
 	if (DestinationPickup)
 	{
@@ -99,6 +111,12 @@ void AOBBulletTrailActor::Tick(float DeltaSeconds)
 	Elapsed += DeltaSeconds;
 	const float Alpha = FMath::Clamp(Elapsed / Duration, 0.0f, 1.0f);
 	SetActorLocation(FMath::Lerp(StartLocation, EndLocation, Alpha));
+	const FVector FlightDirection = (GetActorLocation() - PreviousLocation).GetSafeNormal();
+	if (!FlightDirection.IsNearlyZero())
+	{
+		SetActorRotation(FlightDirection.Rotation());
+	}
+	PreviousLocation = GetActorLocation();
 	if (DestinationPickup)
 	{
 		DestinationPickup->UpdateIncomingFlightLocation(GetActorLocation());
@@ -123,6 +141,7 @@ void AOBBulletTrailActor::Tick(float DeltaSeconds)
 		{
 			DestinationPickup->CompleteIncomingFlight();
 		}
+		UE_LOG(LogOBBulletTrail, Log, TEXT("Bullet trail arrived at %s"), *EndLocation.ToCompactString());
 		SetLifeSpan(FMath::Max(TailLife, 0.01f));
 	}
 }
