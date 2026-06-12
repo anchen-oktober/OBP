@@ -15,9 +15,6 @@ AOBGameMode::AOBGameMode()
 	DefaultPawnClass = AOBCharacter::StaticClass();
 	GameStateClass = AOBGameState::StaticClass();
 	HUDClass = AOBHUD::StaticClass();
-	EnemyClass = AOBEnemy::StaticClass();
-	FastEnemyClass = AOBEnemy::StaticClass();
-	HeavyEnemyClass = AOBEnemy::StaticClass();
 	BulletPickupClass = AOBBulletPickup::StaticClass();
 	WaveManagerClass = AOBWaveManager::StaticClass();
 }
@@ -67,7 +64,6 @@ void AOBGameMode::ApplyWindowMode()
 
 void AOBGameMode::InitializeWaveManager()
 {
-	bool bSpawnedManager = false;
 	for (TActorIterator<AOBWaveManager> It(GetWorld()); It; ++It)
 	{
 		WaveManager = *It;
@@ -82,7 +78,6 @@ void AOBGameMode::InitializeWaveManager()
 			ClassToSpawn = AOBWaveManager::StaticClass();
 		}
 		WaveManager = GetWorld()->SpawnActor<AOBWaveManager>(ClassToSpawn);
-		bSpawnedManager = WaveManager != nullptr;
 	}
 
 	if (!WaveManager)
@@ -91,18 +86,6 @@ void AOBGameMode::InitializeWaveManager()
 		return;
 	}
 
-	if (bSpawnedManager)
-	{
-		WaveManager->ConfigureSpawner(
-			EnemyClass,
-			FastEnemyClass,
-			HeavyEnemyClass,
-			bSpawnEnemiesOnlyInFrontOfPlayer,
-			FrontSpawnMinDot,
-			bAllowAnySpawnIfNoFrontPoint);
-	}
-
-	WaveManager->RestartWaves();
 }
 
 AOBBulletPickup* AOBGameMode::SpawnBulletPickup(const FVector& DropLocation)
@@ -142,6 +125,7 @@ void AOBGameMode::RestartRun(AOBCharacter* Player)
 	if (WaveManager)
 	{
 		WaveManager->StopWaves();
+		WaveManager->ClearSpawnedEnemies();
 	}
 
 	DestroyRunActors();
@@ -166,21 +150,20 @@ void AOBGameMode::RestartRun(AOBCharacter* Player)
 
 	if (WaveManager)
 	{
-		WaveManager->RestartWaves();
+		WaveManager->StartWaves();
 	}
 	else
 	{
 		InitializeWaveManager();
+		if (WaveManager)
+		{
+			WaveManager->StartWaves();
+		}
 	}
 }
 
 void AOBGameMode::DestroyRunActors()
 {
-	for (TActorIterator<AOBEnemy> It(GetWorld()); It; ++It)
-	{
-		It->Disappear();
-	}
-
 	for (TActorIterator<AOBBulletPickup> It(GetWorld()); It; ++It)
 	{
 		It->Destroy();

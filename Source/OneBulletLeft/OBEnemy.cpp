@@ -203,6 +203,7 @@ void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
 	}
 
 	bDead = true;
+	OnDeathReported.Broadcast(this);
 	GetWorldTimerManager().ClearTimer(MoveTimerHandle);
 	GetWorldTimerManager().ClearTimer(RushTransitionTimerHandle);
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);

@@ -38,6 +38,18 @@ struct FOBWaveDefinition
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOBWaveStateChangedSignature, EOBWaveState, NewState, EOBWaveState, PreviousState);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOBWaveStartedSignature, int32, WaveNumber, int32, EnemyCount, float, DifficultyMultiplier);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOBWaveCompletedSignature, int32, WaveNumber);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(
+	FOBWaveEnemySpawnedSignature,
+	AOBEnemy*,
+	Enemy,
+	EOBEnemyType,
+	EnemyType,
+	FVector,
+	SpawnLocation,
+	int32,
+	LivingEnemies);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOBWaveEnemyDiedSignature, AOBEnemy*, Enemy, int32, LivingEnemies);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOBWaveEnemyCountChangedSignature, int32, LivingEnemies);
 
 UCLASS(Blueprintable, PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API AOBWaveManager : public AActor
@@ -47,13 +59,21 @@ class ONEBULLETLEFT_API AOBWaveManager : public AActor
 public:
 	AOBWaveManager();
 
+	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Waves")
-	bool bUseScriptedWaves = true;
+	bool bAutoStartWaves = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Waves")
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadWrite,
+		Category="OneBulletSettings|Waves",
+		meta=(DisplayName="Wave Definitions (Overrides Generated Waves)"))
 	TArray<FOBWaveDefinition> WaveDefinitions;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Waves|Completion")
+	bool bAutoCompleteWhenAllEnemiesDefeated = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Waves|Timing", meta=(ClampMin="0.0"))
 	float InitialWaitDuration = 1.0f;
@@ -118,6 +138,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Visibility")
 	bool bAllowAnySpawnIfNoFrontPoint = false;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Debug")
+	bool bEnableWaveDebugLogs = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Debug")
+	bool bEnableWaveDebugScreenMessages = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Debug", meta=(ClampMin="0.1"))
+	float DebugScreenMessageDuration = 2.0f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Waves|Runtime")
 	EOBWaveState WaveState = EOBWaveState::Waiting;
 
@@ -142,22 +171,41 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="OneBulletSettings|Waves|Events")
 	FOBWaveCompletedSignature OnWaveCompleted;
 
+	UPROPERTY(BlueprintAssignable, Category="OneBulletSettings|Waves|Events")
+	FOBWaveEnemySpawnedSignature OnEnemySpawned;
+
+	UPROPERTY(BlueprintAssignable, Category="OneBulletSettings|Waves|Events")
+	FOBWaveEnemyDiedSignature OnEnemyDied;
+
+	UPROPERTY(BlueprintAssignable, Category="OneBulletSettings|Waves|Events")
+	FOBWaveEnemyCountChangedSignature OnEnemyCountChanged;
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Waves")
+	void StartWaves();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Waves")
+	void StartWave();
+
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Waves")
 	void RestartWaves();
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Waves")
+	void StopWave();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Waves")
 	void StopWaves();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Waves")
+	void CompleteCurrentWave();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Spawning")
+	AOBEnemy* SpawnEnemy(EOBEnemyType Type);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Spawning")
+	void ClearSpawnedEnemies();
 
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Waves")
 	float GetIntermissionTimeRemaining() const;
-
-	void ConfigureSpawner(
-		TSubclassOf<AOBEnemy> InEnemyClass,
-		TSubclassOf<AOBEnemy> InFastEnemyClass,
-		TSubclassOf<AOBEnemy> InHeavyEnemyClass,
-		bool bInSpawnOnlyInFront,
-		float InFrontSpawnMinDot,
-		bool bInAllowAnySpawn);
 
 private:
 	struct FRuntimeWave
@@ -166,25 +214,33 @@ private:
 		int32 HeavyCount = 0;
 		float SpawnInterval = 1.0f;
 		int32 MaxLiveEnemies = 1;
+		bool bFromScriptedDefinition = false;
+		int32 DefinitionIndex = INDEX_NONE;
 	};
 
 	FTimerHandle SpawnTimerHandle;
 	FTimerHandle StateTimerHandle;
-	FTimerHandle CompletionCheckTimerHandle;
+	TSet<TWeakObjectPtr<AOBEnemy>> SpawnedEnemies;
 	int32 RemainingFastEnemies = 0;
 	int32 RemainingHeavyEnemies = 0;
 	int32 CurrentMaxLiveEnemies = 1;
 
 	void SetWaveState(EOBWaveState NewState);
-	void StartNextWave();
+	void BeginNextWave();
 	void SpawnEnemyTick();
 	void CheckWaveCompletion();
 	void EnterIntermission();
-	bool SpawnEnemyOfType(EOBEnemyType Type);
 	bool TryChooseSpawnLocation(FVector& OutLocation) const;
-	int32 CountLiveEnemies() const;
+	void RefreshLivingEnemyCount();
 	FRuntimeWave BuildWave(int32 WaveNumber) const;
 	float ResolveInitialWaitDuration() const;
 	float ResolveIntermissionDuration() const;
 	bool IsGameOver() const;
+	void DebugWaveMessage(const FString& Message, const FColor& Color = FColor::White) const;
+
+	UFUNCTION()
+	void HandleEnemyDeathReported(AOBEnemy* Enemy);
+
+	UFUNCTION()
+	void HandleEnemyDestroyed(AActor* DestroyedActor);
 };

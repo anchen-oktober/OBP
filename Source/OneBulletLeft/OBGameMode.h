@@ -33,26 +33,8 @@ public:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="OneBulletSettings|Waves")
 	TObjectPtr<AOBWaveManager> WaveManager;
 
-	UPROPERTY(EditDefaultsOnly, Category="OneBulletSettings|Spawning")
-	TSubclassOf<AOBEnemy> EnemyClass;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="OneBulletSettings|Spawning")
-	TSubclassOf<AOBEnemy> FastEnemyClass;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="OneBulletSettings|Spawning")
-	TSubclassOf<AOBEnemy> HeavyEnemyClass;
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="OneBulletSettings|Bullet")
 	TSubclassOf<AOBBulletPickup> BulletPickupClass;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Visibility")
-	bool bSpawnEnemiesOnlyInFrontOfPlayer = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Visibility")
-	float FrontSpawnMinDot = 0.35f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Visibility")
-	bool bAllowAnySpawnIfNoFrontPoint = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Bullet")
 	float BulletPickupDropHeight = 5.0f;

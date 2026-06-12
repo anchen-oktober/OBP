@@ -5,7 +5,10 @@
 #include "OBEnemy.generated.h"
 
 class AOBBulletPickup;
+class AOBEnemy;
 class UAnimationAsset;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOBEnemyDeathReportedSignature, AOBEnemy*, Enemy);
 
 UENUM(BlueprintType)
 enum class EOBEnemyType : uint8
@@ -334,6 +337,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void KillAndDropBullet(const FVector& DropLocation);
+
+	UPROPERTY(BlueprintAssignable, Category="OneBulletSettings|Events")
+	FOBEnemyDeathReportedSignature OnDeathReported;
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void ApplyKick(const FVector& Direction);

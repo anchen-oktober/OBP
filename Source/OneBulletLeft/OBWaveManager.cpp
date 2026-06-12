@@ -1,9 +1,12 @@
 #include "OBWaveManager.h"
 
+#include "Engine/Engine.h"
 #include "GameFramework/Controller.h"
 #include "Kismet/GameplayStatics.h"
 #include "OBCharacter.h"
 #include "OBGameState.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogOBWaveManager, Log, All);
 
 AOBWaveManager::AOBWaveManager()
 {
@@ -28,38 +31,24 @@ AOBWaveManager::AOBWaveManager()
 	};
 }
 
+void AOBWaveManager::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (bAutoStartWaves)
+	{
+		StartWaves();
+	}
+}
+
 void AOBWaveManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	StopWaves();
+	SpawnedEnemies.Reset();
 	Super::EndPlay(EndPlayReason);
 }
 
-void AOBWaveManager::ConfigureSpawner(
-	TSubclassOf<AOBEnemy> InEnemyClass,
-	TSubclassOf<AOBEnemy> InFastEnemyClass,
-	TSubclassOf<AOBEnemy> InHeavyEnemyClass,
-	bool bInSpawnOnlyInFront,
-	float InFrontSpawnMinDot,
-	bool bInAllowAnySpawn)
-{
-	if (InEnemyClass)
-	{
-		EnemyClass = InEnemyClass;
-	}
-	if (InFastEnemyClass)
-	{
-		FastEnemyClass = InFastEnemyClass;
-	}
-	if (InHeavyEnemyClass)
-	{
-		HeavyEnemyClass = InHeavyEnemyClass;
-	}
-	bSpawnEnemiesOnlyInFrontOfPlayer = bInSpawnOnlyInFront;
-	FrontSpawnMinDot = InFrontSpawnMinDot;
-	bAllowAnySpawnIfNoFrontPoint = bInAllowAnySpawn;
-}
-
-void AOBWaveManager::RestartWaves()
+void AOBWaveManager::StartWaves()
 {
 	if (!GetWorld())
 	{
@@ -68,11 +57,11 @@ void AOBWaveManager::RestartWaves()
 
 	GetWorldTimerManager().ClearTimer(SpawnTimerHandle);
 	GetWorldTimerManager().ClearTimer(StateTimerHandle);
-	GetWorldTimerManager().ClearTimer(CompletionCheckTimerHandle);
+	ClearSpawnedEnemies();
 
 	CurrentWaveNumber = 0;
 	EnemiesRemainingToSpawn = 0;
-	LivingEnemyCount = CountLiveEnemies();
+	RefreshLivingEnemyCount();
 	CurrentDifficultyMultiplier = 1.0f;
 	RemainingFastEnemies = 0;
 	RemainingHeavyEnemies = 0;
@@ -81,27 +70,47 @@ void AOBWaveManager::RestartWaves()
 	const float WaitDuration = ResolveInitialWaitDuration();
 	if (WaitDuration <= 0.0f)
 	{
-		StartNextWave();
+		BeginNextWave();
 	}
 	else
 	{
-		GetWorldTimerManager().SetTimer(StateTimerHandle, this, &AOBWaveManager::StartNextWave, WaitDuration, false);
+		GetWorldTimerManager().SetTimer(StateTimerHandle, this, &AOBWaveManager::BeginNextWave, WaitDuration, false);
 	}
 }
 
-void AOBWaveManager::StopWaves()
+void AOBWaveManager::StartWave()
+{
+	if (!GetWorld() || WaveState == EOBWaveState::Active)
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(StateTimerHandle);
+	BeginNextWave();
+}
+
+void AOBWaveManager::RestartWaves()
+{
+	StartWaves();
+}
+
+void AOBWaveManager::StopWave()
 {
 	if (GetWorld())
 	{
 		GetWorldTimerManager().ClearTimer(SpawnTimerHandle);
 		GetWorldTimerManager().ClearTimer(StateTimerHandle);
-		GetWorldTimerManager().ClearTimer(CompletionCheckTimerHandle);
 	}
 
 	RemainingFastEnemies = 0;
 	RemainingHeavyEnemies = 0;
 	EnemiesRemainingToSpawn = 0;
 	SetWaveState(EOBWaveState::Waiting);
+}
+
+void AOBWaveManager::StopWaves()
+{
+	StopWave();
 }
 
 float AOBWaveManager::GetIntermissionTimeRemaining() const
@@ -121,7 +130,7 @@ void AOBWaveManager::SetWaveState(EOBWaveState NewState)
 	OnWaveStateChanged.Broadcast(WaveState, PreviousState);
 }
 
-void AOBWaveManager::StartNextWave()
+void AOBWaveManager::BeginNextWave()
 {
 	if (!GetWorld() || IsGameOver())
 	{
@@ -145,13 +154,24 @@ void AOBWaveManager::StartNextWave()
 	SetWaveState(EOBWaveState::Active);
 	OnWaveStarted.Broadcast(CurrentWaveNumber, EnemiesRemainingToSpawn, CurrentDifficultyMultiplier);
 
-	UE_LOG(
-		LogTemp,
-		Log,
-		TEXT("Wave %d started: %d enemies, difficulty x%.2f"),
-		CurrentWaveNumber,
-		EnemiesRemainingToSpawn,
-		CurrentDifficultyMultiplier);
+	const FString WaveSource = RuntimeWave.bFromScriptedDefinition
+		? FString::Printf(
+			TEXT("Scripted definition %d/%d"),
+			RuntimeWave.DefinitionIndex + 1,
+			WaveDefinitions.Num())
+		: TEXT("Generated");
+	DebugWaveMessage(
+		FString::Printf(
+			TEXT("Wave %d started [%s]: Fast=%d, Heavy=%d, Total=%d, Interval=%.2fs, MaxAlive=%d, Difficulty=x%.2f"),
+			CurrentWaveNumber,
+			*WaveSource,
+			RuntimeWave.FastCount,
+			RuntimeWave.HeavyCount,
+			EnemiesRemainingToSpawn,
+			RuntimeWave.SpawnInterval,
+			CurrentMaxLiveEnemies,
+			CurrentDifficultyMultiplier),
+		FColor::Cyan);
 
 	SpawnEnemyTick();
 	if (EnemiesRemainingToSpawn > 0)
@@ -164,12 +184,6 @@ void AOBWaveManager::StartNextWave()
 			true);
 	}
 
-	GetWorldTimerManager().SetTimer(
-		CompletionCheckTimerHandle,
-		this,
-		&AOBWaveManager::CheckWaveCompletion,
-		0.1f,
-		true);
 	CheckWaveCompletion();
 }
 
@@ -180,7 +194,7 @@ void AOBWaveManager::SpawnEnemyTick()
 		return;
 	}
 
-	LivingEnemyCount = CountLiveEnemies();
+	RefreshLivingEnemyCount();
 	if (LivingEnemyCount >= CurrentMaxLiveEnemies)
 	{
 		return;
@@ -205,7 +219,7 @@ void AOBWaveManager::SpawnEnemyTick()
 		TypeToSpawn = FMath::FRand() < HeavyChance ? EOBEnemyType::Heavy : EOBEnemyType::Fast;
 	}
 
-	if (!SpawnEnemyOfType(TypeToSpawn))
+	if (!SpawnEnemy(TypeToSpawn))
 	{
 		return;
 	}
@@ -220,11 +234,11 @@ void AOBWaveManager::SpawnEnemyTick()
 	}
 
 	EnemiesRemainingToSpawn = RemainingFastEnemies + RemainingHeavyEnemies;
-	LivingEnemyCount = CountLiveEnemies();
 	if (EnemiesRemainingToSpawn <= 0)
 	{
 		GetWorldTimerManager().ClearTimer(SpawnTimerHandle);
 	}
+	CheckWaveCompletion();
 }
 
 void AOBWaveManager::CheckWaveCompletion()
@@ -234,18 +248,37 @@ void AOBWaveManager::CheckWaveCompletion()
 		return;
 	}
 
-	LivingEnemyCount = CountLiveEnemies();
+	if (!bAutoCompleteWhenAllEnemiesDefeated)
+	{
+		return;
+	}
+
+	RefreshLivingEnemyCount();
 	if (EnemiesRemainingToSpawn > 0 || LivingEnemyCount > 0)
 	{
 		return;
 	}
 
+	CompleteCurrentWave();
+}
+
+void AOBWaveManager::CompleteCurrentWave()
+{
+	if (!GetWorld() || WaveState != EOBWaveState::Active)
+	{
+		return;
+	}
+
 	GetWorldTimerManager().ClearTimer(SpawnTimerHandle);
-	GetWorldTimerManager().ClearTimer(CompletionCheckTimerHandle);
+	RemainingFastEnemies = 0;
+	RemainingHeavyEnemies = 0;
+	EnemiesRemainingToSpawn = 0;
 	SetWaveState(EOBWaveState::Completed);
 	OnWaveCompleted.Broadcast(CurrentWaveNumber);
 
-	UE_LOG(LogTemp, Log, TEXT("Wave %d completed"), CurrentWaveNumber);
+	DebugWaveMessage(
+		FString::Printf(TEXT("Wave %d completed; living enemies: %d"), CurrentWaveNumber, LivingEnemyCount),
+		FColor::Green);
 
 	const float CompletedDuration = FMath::Max(CompletedStateDuration, 0.0f);
 	if (CompletedDuration <= 0.0f)
@@ -267,15 +300,16 @@ void AOBWaveManager::EnterIntermission()
 
 	SetWaveState(EOBWaveState::Intermission);
 	const float Duration = ResolveIntermissionDuration();
-	GetWorldTimerManager().SetTimer(StateTimerHandle, this, &AOBWaveManager::StartNextWave, Duration, false);
+	GetWorldTimerManager().SetTimer(StateTimerHandle, this, &AOBWaveManager::BeginNextWave, Duration, false);
 }
 
-bool AOBWaveManager::SpawnEnemyOfType(EOBEnemyType Type)
+AOBEnemy* AOBWaveManager::SpawnEnemy(EOBEnemyType Type)
 {
 	FVector SpawnLocation = FVector::ZeroVector;
 	if (!TryChooseSpawnLocation(SpawnLocation))
 	{
-		return false;
+		UE_LOG(LogOBWaveManager, Warning, TEXT("WaveManager could not find a valid enemy spawn point."));
+		return nullptr;
 	}
 
 	TSubclassOf<AOBEnemy> ClassToSpawn = Type == EOBEnemyType::Heavy ? HeavyEnemyClass : FastEnemyClass;
@@ -285,21 +319,49 @@ bool AOBWaveManager::SpawnEnemyOfType(EOBEnemyType Type)
 	}
 	if (!ClassToSpawn)
 	{
-		return false;
+		UE_LOG(LogOBWaveManager, Error, TEXT("WaveManager has no enemy class configured for type %d."), static_cast<int32>(Type));
+		return nullptr;
 	}
 
-	FActorSpawnParameters Params;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-	AOBEnemy* Enemy = GetWorld()->SpawnActor<AOBEnemy>(ClassToSpawn, SpawnLocation, FRotator::ZeroRotator, Params);
+	const FTransform SpawnTransform(FRotator::ZeroRotator, SpawnLocation);
+	AOBEnemy* Enemy = GetWorld()->SpawnActorDeferred<AOBEnemy>(
+		ClassToSpawn,
+		SpawnTransform,
+		this,
+		nullptr,
+		ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
 	if (!Enemy)
 	{
-		return false;
+		UE_LOG(LogOBWaveManager, Error, TEXT("WaveManager failed to spawn enemy class %s."), *GetNameSafe(ClassToSpawn));
+		return nullptr;
 	}
 
 	Enemy->Configure(Type);
 	Enemy->SetDifficultySpeedMultiplier(CurrentDifficultyMultiplier);
+	Enemy->OnDeathReported.AddUniqueDynamic(this, &AOBWaveManager::HandleEnemyDeathReported);
+	Enemy->OnDestroyed.AddUniqueDynamic(this, &AOBWaveManager::HandleEnemyDestroyed);
+	SpawnedEnemies.Add(TWeakObjectPtr<AOBEnemy>(Enemy));
+	RefreshLivingEnemyCount();
+
+	AOBEnemy* FinishedEnemy = Cast<AOBEnemy>(UGameplayStatics::FinishSpawningActor(Enemy, SpawnTransform));
+	if (!FinishedEnemy)
+	{
+		SpawnedEnemies.Remove(TWeakObjectPtr<AOBEnemy>(Enemy));
+		RefreshLivingEnemyCount();
+		return nullptr;
+	}
+
 	Enemy->TriggerSpawnFeedback();
-	return true;
+	OnEnemySpawned.Broadcast(Enemy, Type, SpawnLocation, LivingEnemyCount);
+	DebugWaveMessage(
+		FString::Printf(
+			TEXT("Wave %d spawned %s at %s; living: %d"),
+			CurrentWaveNumber,
+			Type == EOBEnemyType::Heavy ? TEXT("Heavy") : TEXT("Fast"),
+			*SpawnLocation.ToCompactString(),
+			LivingEnemyCount),
+		FColor::Yellow);
+	return Enemy;
 }
 
 bool AOBWaveManager::TryChooseSpawnLocation(FVector& OutLocation) const
@@ -350,21 +412,96 @@ bool AOBWaveManager::TryChooseSpawnLocation(FVector& OutLocation) const
 	return false;
 }
 
-int32 AOBWaveManager::CountLiveEnemies() const
+void AOBWaveManager::ClearSpawnedEnemies()
 {
-	TArray<AActor*> Enemies;
-	UGameplayStatics::GetAllActorsOfClass(this, AOBEnemy::StaticClass(), Enemies);
+	TArray<TWeakObjectPtr<AOBEnemy>> EnemiesToClear = SpawnedEnemies.Array();
+	SpawnedEnemies.Reset();
 
-	int32 Count = 0;
-	for (const AActor* EnemyActor : Enemies)
+	for (const TWeakObjectPtr<AOBEnemy>& EnemyPtr : EnemiesToClear)
 	{
-		const AOBEnemy* Enemy = Cast<AOBEnemy>(EnemyActor);
-		if (Enemy && !Enemy->IsDead())
+		if (AOBEnemy* Enemy = EnemyPtr.Get())
 		{
-			++Count;
+			Enemy->OnDeathReported.RemoveDynamic(this, &AOBWaveManager::HandleEnemyDeathReported);
+			Enemy->OnDestroyed.RemoveDynamic(this, &AOBWaveManager::HandleEnemyDestroyed);
+			Enemy->Disappear();
 		}
 	}
-	return Count;
+
+	RefreshLivingEnemyCount();
+}
+
+void AOBWaveManager::RefreshLivingEnemyCount()
+{
+	int32 NewLivingEnemyCount = 0;
+	for (auto It = SpawnedEnemies.CreateIterator(); It; ++It)
+	{
+		AOBEnemy* Enemy = It->Get();
+		if (!IsValid(Enemy))
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+		if (!Enemy->IsDead())
+		{
+			++NewLivingEnemyCount;
+		}
+	}
+
+	if (LivingEnemyCount != NewLivingEnemyCount)
+	{
+		LivingEnemyCount = NewLivingEnemyCount;
+		OnEnemyCountChanged.Broadcast(LivingEnemyCount);
+	}
+}
+
+void AOBWaveManager::HandleEnemyDeathReported(AOBEnemy* Enemy)
+{
+	if (!IsValid(Enemy) || !SpawnedEnemies.Contains(TWeakObjectPtr<AOBEnemy>(Enemy)))
+	{
+		return;
+	}
+
+	RefreshLivingEnemyCount();
+	OnEnemyDied.Broadcast(Enemy, LivingEnemyCount);
+	DebugWaveMessage(
+		FString::Printf(
+			TEXT("Wave %d enemy died: %s; living: %d; remaining to spawn: %d"),
+			CurrentWaveNumber,
+			*GetNameSafe(Enemy),
+			LivingEnemyCount,
+			EnemiesRemainingToSpawn),
+		FColor::Orange);
+	CheckWaveCompletion();
+}
+
+void AOBWaveManager::HandleEnemyDestroyed(AActor* DestroyedActor)
+{
+	AOBEnemy* Enemy = Cast<AOBEnemy>(DestroyedActor);
+	if (!Enemy)
+	{
+		return;
+	}
+
+	const int32 RemovedCount = SpawnedEnemies.Remove(TWeakObjectPtr<AOBEnemy>(Enemy));
+	if (RemovedCount <= 0)
+	{
+		return;
+	}
+
+	RefreshLivingEnemyCount();
+	CheckWaveCompletion();
+}
+
+void AOBWaveManager::DebugWaveMessage(const FString& Message, const FColor& Color) const
+{
+	if (bEnableWaveDebugLogs)
+	{
+		UE_LOG(LogOBWaveManager, Log, TEXT("%s"), *Message);
+	}
+	if (bEnableWaveDebugScreenMessages && GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, DebugScreenMessageDuration, Color, Message);
+	}
 }
 
 AOBWaveManager::FRuntimeWave AOBWaveManager::BuildWave(int32 WaveNumber) const
@@ -372,7 +509,7 @@ AOBWaveManager::FRuntimeWave AOBWaveManager::BuildWave(int32 WaveNumber) const
 	FRuntimeWave Result;
 	const int32 SafeWaveNumber = FMath::Max(WaveNumber, 1);
 
-	if (bUseScriptedWaves && WaveDefinitions.Num() > 0)
+	if (WaveDefinitions.Num() > 0)
 	{
 		const int32 DefinitionIndex = FMath::Min(SafeWaveNumber - 1, WaveDefinitions.Num() - 1);
 		const FOBWaveDefinition& Definition = WaveDefinitions[DefinitionIndex];
@@ -380,6 +517,8 @@ AOBWaveManager::FRuntimeWave AOBWaveManager::BuildWave(int32 WaveNumber) const
 		Result.HeavyCount = FMath::Max(Definition.HeavyCount, 0);
 		Result.SpawnInterval = FMath::Max(Definition.SpawnInterval, MinimumSpawnInterval);
 		Result.MaxLiveEnemies = FMath::Max(Definition.MaxLiveEnemies, 1);
+		Result.bFromScriptedDefinition = true;
+		Result.DefinitionIndex = DefinitionIndex;
 
 		const int32 ExtraWaveCount = FMath::Max(SafeWaveNumber - WaveDefinitions.Num(), 0);
 		if (bScaleDifficulty && ExtraWaveCount > 0)
@@ -413,7 +552,7 @@ AOBWaveManager::FRuntimeWave AOBWaveManager::BuildWave(int32 WaveNumber) const
 
 float AOBWaveManager::ResolveInitialWaitDuration() const
 {
-	if (bUseScriptedWaves && WaveDefinitions.Num() > 0)
+	if (WaveDefinitions.Num() > 0)
 	{
 		return FMath::Max(WaveDefinitions[0].DelayBeforeWave, 0.0f);
 	}
@@ -424,7 +563,7 @@ float AOBWaveManager::ResolveIntermissionDuration() const
 {
 	float Duration = IntermissionDuration;
 	const int32 NextDefinitionIndex = CurrentWaveNumber;
-	if (bUseScriptedWaves && WaveDefinitions.IsValidIndex(NextDefinitionIndex))
+	if (WaveDefinitions.IsValidIndex(NextDefinitionIndex))
 	{
 		Duration = WaveDefinitions[NextDefinitionIndex].DelayBeforeWave;
 	}
