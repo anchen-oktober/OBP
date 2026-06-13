@@ -338,6 +338,48 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation", meta=(EditCondition="bUseSimpleLocomotionAnimations", ClampMin="0.0"))
 	float RunAnimationPlayRate = 1.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation|Locomotion", meta=(ClampMin="1.0", UIMin="90.0", UIMax="540.0"))
+	float RotationRateYaw = 220.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation|Locomotion", meta=(ClampMin="0.0", UIMin="1.0", UIMax="20.0"))
+	float DirectionInterpSpeed = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation|Locomotion", meta=(ClampMin="0.0", UIMin="1.0", UIMax="20.0"))
+	float TurnAngleInterpSpeed = 7.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation|Locomotion", meta=(ClampMin="0.0", UIMin="1.0", UIMax="30.0"))
+	float AccelerationInterpSpeed = 10.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation|Locomotion", meta=(ClampMin="0.0", UIMin="0.0", UIMax="100.0"))
+	float MovingSpeedThreshold = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation|Locomotion", meta=(ClampMin="0.0", ClampMax="180.0", UIMin="5.0", UIMax="120.0"))
+	float TurningAngleThreshold = 35.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation|Locomotion", meta=(ClampMin="0.0", UIMin="0.0", UIMax="150.0"))
+	float TurnInPlaceMaxSpeed = 35.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category="OneBulletSettings|Animation|Locomotion")
+	float Speed = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category="OneBulletSettings|Animation|Locomotion")
+	float Direction = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category="OneBulletSettings|Animation|Locomotion")
+	FVector Acceleration = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category="OneBulletSettings|Animation|Locomotion")
+	float YawDelta = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category="OneBulletSettings|Animation|Locomotion")
+	float TurnAngle = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category="OneBulletSettings|Animation|Locomotion")
+	bool bIsMoving = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category="OneBulletSettings|Animation|Locomotion")
+	bool bIsTurning = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Bullet Attachment")
 	FName BulletAttachBone = TEXT("spine_03");
 
@@ -366,7 +408,7 @@ public:
 	FOBEnemyDeathReportedSignature OnDeathReported;
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
-	void ApplyKick(const FVector& Direction);
+	void ApplyKick(const FVector& KickDirection);
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Events")
 	void TriggerSpawnFeedback();
@@ -398,7 +440,7 @@ public:
 	void OnEnemyDeath(const FVector& DropLocation);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
-	void OnEnemyKicked(const FVector& Direction, EOBEnemyType Type);
+	void OnEnemyKicked(const FVector& KickDirection, EOBEnemyType Type);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
 	void OnEnemySpawned(EOBEnemyType Type, const FVector& Location);
@@ -466,7 +508,7 @@ protected:
 	void ResumeAfterStun();
 	void FinishSpawnWarning();
 	void FinishSpawnProtection();
-	void BeginKickKnockback(const FVector& Direction, float Distance, float Duration, float StunDuration);
+	void BeginKickKnockback(const FVector& KnockbackDirection, float Distance, float Duration, float StunDuration);
 	void UpdateKickKnockback(float DeltaSeconds);
 	void RequestMove();
 	void StopPursuitForPlayerDeath();
@@ -511,6 +553,8 @@ protected:
 	void ChooseNewPatrolTarget();
 	void MoveAggressivelyToPlayer();
 	void ApplyDirectLostBulletChase();
+	void UpdateSmoothFacing(float DeltaSeconds);
+	void UpdateLocomotionState(float DeltaSeconds);
 	void UpdateSimpleLocomotionAnimation();
 	FVector CalculateApproachTarget() const;
 	void DrawDetectionRadiusDebug() const;

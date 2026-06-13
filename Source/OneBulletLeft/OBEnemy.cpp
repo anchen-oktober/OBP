@@ -44,6 +44,10 @@ AOBEnemy::AOBEnemy()
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	GetCharacterMovement()->MaxWalkSpeed = FastSpeed;
 	GetCharacterMovement()->BrakingFrictionFactor = 0.4f;
+	GetCharacterMovement()->bOrientRotationToMovement = true;
+	GetCharacterMovement()->bUseControllerDesiredRotation = false;
+	GetCharacterMovement()->RotationRate = FRotator(0.0f, RotationRateYaw, 0.0f);
+	bUseControllerRotationYaw = false;
 
 	GetMesh()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -92.0f));
@@ -83,6 +87,9 @@ void AOBEnemy::BeginPlay()
 	}
 	NormalizePressureSettings();
 	Configure(EnemyType);
+	GetCharacterMovement()->bOrientRotationToMovement = true;
+	GetCharacterMovement()->bUseControllerDesiredRotation = false;
+	GetCharacterMovement()->RotationRate = FRotator(0.0f, RotationRateYaw, 0.0f);
 	PlayerTarget = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0));
 	PatrolOrigin = PatrolCenter;
 	PatrolOrigin.Z = GetActorLocation().Z;
@@ -144,6 +151,8 @@ void AOBEnemy::Tick(float DeltaSeconds)
 	if (PlayerTarget && PlayerTarget->IsDead())
 	{
 		StopPursuitForPlayerDeath();
+		UpdateSmoothFacing(DeltaSeconds);
+		UpdateLocomotionState(DeltaSeconds);
 		UpdateSimpleLocomotionAnimation();
 		return;
 	}
@@ -160,16 +169,9 @@ void AOBEnemy::Tick(float DeltaSeconds)
 				AddMovementInput(MovementDirection, 1.0f, true);
 			}
 		}
-
-		const FVector FacingTarget = CurrentApproachTarget.IsNearlyZero()
-			? PlayerTarget->GetActorLocation()
-			: CurrentApproachTarget;
-		const FVector FacingDirection = (FacingTarget - GetActorLocation()).GetSafeNormal2D();
-		if (!FacingDirection.IsNearlyZero())
-		{
-			SetActorRotation(FacingDirection.Rotation());
-		}
 	}
+	UpdateSmoothFacing(DeltaSeconds);
+	UpdateLocomotionState(DeltaSeconds);
 	UpdateSimpleLocomotionAnimation();
 	TryTouchKill();
 	DrawDetectionRadiusDebug();
@@ -258,14 +260,14 @@ void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
 	AssignEnemyRoles();
 }
 
-void AOBEnemy::ApplyKick(const FVector& Direction)
+void AOBEnemy::ApplyKick(const FVector& KickDirection)
 {
 	if (bDead)
 	{
 		return;
 	}
 
-	const FVector LaunchDirection = Direction.GetSafeNormal2D();
+	const FVector LaunchDirection = KickDirection.GetSafeNormal2D();
 	OnEnemyKicked(LaunchDirection, EnemyType);
 	if (EnemyType == EOBEnemyType::Fast)
 	{
@@ -390,9 +392,9 @@ void AOBEnemy::ResumeAfterStun()
 	RequestMove();
 }
 
-void AOBEnemy::BeginKickKnockback(const FVector& Direction, float Distance, float Duration, float StunDuration)
+void AOBEnemy::BeginKickKnockback(const FVector& KnockbackDirection, float Distance, float Duration, float StunDuration)
 {
-	ActiveKickKnockbackDirection = Direction.GetSafeNormal2D();
+	ActiveKickKnockbackDirection = KnockbackDirection.GetSafeNormal2D();
 	if (ActiveKickKnockbackDirection.IsNearlyZero())
 	{
 		return;
@@ -1252,12 +1254,12 @@ FVector AOBEnemy::ChooseWholeArenaPatrolTarget() const
 		for (int32 Attempt = 1; Attempt <= 16; ++Attempt)
 		{
 			const float CandidateAngle = BaseAngle + DirectionSign * PatrolPerimeterStepDegrees * static_cast<float>(Attempt);
-			const FVector Direction(
+			const FVector PerimeterDirection(
 				FMath::Cos(FMath::DegreesToRadians(CandidateAngle)),
 				FMath::Sin(FMath::DegreesToRadians(CandidateAngle)),
 				0.0f);
-			const FVector Jitter = Direction.RotateAngleAxis(90.0f, FVector::UpVector) * FMath::FRandRange(-PatrolPointJitter, PatrolPointJitter);
-			FVector Candidate = PatrolOrigin + Direction * PerimeterRadius + Jitter;
+			const FVector Jitter = PerimeterDirection.RotateAngleAxis(90.0f, FVector::UpVector) * FMath::FRandRange(-PatrolPointJitter, PatrolPointJitter);
+			FVector Candidate = PatrolOrigin + PerimeterDirection * PerimeterRadius + Jitter;
 			Candidate.Z = GetActorLocation().Z;
 
 			if (FVector::DistSquared2D(GetActorLocation(), Candidate) <= FMath::Square(MinTargetDistance))
@@ -1370,10 +1372,10 @@ FVector AOBEnemy::CalculatePatrolMovementDirection(const FVector& DesiredDirecti
 	const FCollisionShape ProbeShape = FCollisionShape::MakeSphere(PatrolObstacleProbeRadius);
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(EnemyPatrolObstacleProbe), false, this);
 
-	auto IsDirectionBlocked = [&](const FVector& Direction)
+	auto IsDirectionBlocked = [&](const FVector& ProbeDirection)
 	{
 		FHitResult Hit;
-		const FVector TraceEnd = TraceStart + Direction.GetSafeNormal2D() * PatrolObstacleProbeDistance;
+		const FVector TraceEnd = TraceStart + ProbeDirection.GetSafeNormal2D() * PatrolObstacleProbeDistance;
 		return GetWorld()->SweepSingleByChannel(Hit, TraceStart, TraceEnd, FQuat::Identity, ECC_WorldStatic, ProbeShape, QueryParams);
 	};
 
@@ -1558,6 +1560,91 @@ void AOBEnemy::ApplyDirectLostBulletChase()
 	{
 		AddMovementInput(DirectionToPlayer, 1.0f, true);
 	}
+}
+
+void AOBEnemy::UpdateSmoothFacing(float DeltaSeconds)
+{
+	if (bDead || bStunned || !GetCharacterMovement())
+	{
+		return;
+	}
+
+	const FVector PlanarVelocity = GetVelocity().GetSafeNormal2D();
+	const bool bHasMovementDirection = !PlanarVelocity.IsNearlyZero();
+	const FVector FacingTarget = CurrentApproachTarget.IsNearlyZero() && PlayerTarget
+		? PlayerTarget->GetActorLocation()
+		: CurrentApproachTarget;
+	const FVector TargetDirection = (FacingTarget - GetActorLocation()).GetSafeNormal2D();
+	const FVector DesiredDirection = bHasMovementDirection ? PlanarVelocity : TargetDirection;
+	if (DesiredDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	// CharacterMovement handles moving turns. At low speed, rotate smoothly so turn-in-place
+	// animation data remains useful without snapping the actor toward a newly selected target.
+	if (GetVelocity().SizeSquared2D() <= FMath::Square(TurnInPlaceMaxSpeed))
+	{
+		FRotator DesiredRotation = DesiredDirection.Rotation();
+		DesiredRotation.Pitch = 0.0f;
+		DesiredRotation.Roll = 0.0f;
+		const FRotator NewRotation = FMath::RInterpConstantTo(
+			GetActorRotation(),
+			DesiredRotation,
+			DeltaSeconds,
+			RotationRateYaw);
+		SetActorRotation(NewRotation);
+	}
+}
+
+void AOBEnemy::UpdateLocomotionState(float DeltaSeconds)
+{
+	const FVector PlanarVelocity(GetVelocity().X, GetVelocity().Y, 0.0f);
+	Speed = PlanarVelocity.Size();
+	bIsMoving = Speed > MovingSpeedThreshold;
+
+	float RawDirection = 0.0f;
+	if (bIsMoving)
+	{
+		const FVector LocalVelocity = GetActorTransform().InverseTransformVectorNoScale(PlanarVelocity);
+		RawDirection = FMath::RadiansToDegrees(FMath::Atan2(LocalVelocity.Y, LocalVelocity.X));
+	}
+	Direction = FMath::RInterpTo(
+		FRotator(0.0f, Direction, 0.0f),
+		FRotator(0.0f, RawDirection, 0.0f),
+		DeltaSeconds,
+		DirectionInterpSpeed).Yaw;
+
+	const FVector RawAcceleration = GetCharacterMovement()
+		? GetCharacterMovement()->GetCurrentAcceleration()
+		: FVector::ZeroVector;
+	Acceleration = FMath::VInterpTo(
+		Acceleration,
+		RawAcceleration,
+		DeltaSeconds,
+		AccelerationInterpSpeed);
+
+	const FVector FacingTarget = CurrentApproachTarget.IsNearlyZero() && PlayerTarget
+		? PlayerTarget->GetActorLocation()
+		: CurrentApproachTarget;
+	FVector DesiredFacing = bIsMoving
+		? PlanarVelocity.GetSafeNormal()
+		: (FacingTarget - GetActorLocation()).GetSafeNormal2D();
+	if (DesiredFacing.IsNearlyZero())
+	{
+		DesiredFacing = GetActorForwardVector();
+	}
+
+	const float RawYawDelta = FMath::FindDeltaAngleDegrees(
+		GetActorRotation().Yaw,
+		DesiredFacing.Rotation().Yaw);
+	YawDelta = FMath::RInterpTo(
+		FRotator(0.0f, YawDelta, 0.0f),
+		FRotator(0.0f, RawYawDelta, 0.0f),
+		DeltaSeconds,
+		TurnAngleInterpSpeed).Yaw;
+	TurnAngle = YawDelta;
+	bIsTurning = FMath::Abs(YawDelta) >= TurningAngleThreshold;
 }
 
 void AOBEnemy::UpdateSimpleLocomotionAnimation()
