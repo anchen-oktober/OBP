@@ -194,7 +194,21 @@ Flanker закрепляется в одном из четырёх сектор�
 
 ## Волны
 
-В `BP_OBGameMode` включена короткая pacing-структура:
+Волнами и спавном врагов управляет отдельный `BP_OBWaveManager`. `BP_OBGameMode` только находит существующий Wave Manager на уровне или создаёт экземпляр класса, указанного в `Wave Manager Class`.
+
+Состояния волны:
+
+`Waiting -> Active -> Completed -> Intermission -> Active`
+
+- `Waiting`: начальная задержка перед первой волной;
+- `Active`: враги постепенно спавнятся, игрок продолжает сражаться;
+- `Completed`: короткое состояние для сообщения `Wave Cleared`;
+- `Intermission`: пауза `3-5 s`, спавн отключён, управление игроком сохраняется;
+- следующая волна начинается автоматически после завершения таймера.
+
+Волна завершается только тогда, когда `Enemies Remaining To Spawn == 0` и `Living Enemy Count == 0`. Смерть и уничтожение каждого врага отслеживаются Wave Manager, поэтому параллельного счётчика в Game Mode нет.
+
+Стартовая pacing-структура:
 
 | Волна | Состав |
 | --- | --- |
@@ -202,7 +216,52 @@ Flanker закрепляется в одном из четырёх сектор�
 | 2 | 1 Fast + 1 Heavy |
 | 3 | 3 Fast + 2 Heavy |
 
-Все параметры меняются в `Wave Definitions`: количество врагов, задержка, интервал спавна и лимит живых врагов.
+Количество врагов разных видов задаётся в `BP_OBWaveManager -> Wave Definitions (Overrides Generated Waves)`:
+
+| Поле элемента | Назначение |
+| --- | --- |
+| `Fast Count` | количество Fast-врагов |
+| `Heavy Count` | количество Heavy-врагов |
+| `Delay Before Wave` | задержка перед этой волной |
+| `Spawn Interval` | интервал между попытками спавна |
+| `Max Live Enemies` | лимит одновременно живых врагов |
+
+Важно: если `Wave Definitions` не пуст, именно этот массив является источником состава волн. Поля `Base Enemies Per Wave` и остальные настройки секции `Generated` используются только при пустом массиве, а после последнего scripted-элемента участвуют в дальнейшем масштабировании.
+
+### Централизованный Спавн
+
+`BP_OBWaveManager` является единственной точкой создания врагов. Внешние системы могут запускать или останавливать волны через публичный API, но не должны вызывать `SpawnActor` для врагов самостоятельно.
+
+Основной Blueprint API:
+
+- `Start Waves`, `Start Wave`, `Restart Waves`;
+- `Stop Wave`, `Stop Waves`, `Complete Current Wave`;
+- `Spawn Enemy`, `Clear Spawned Enemies`;
+- события `On Wave State Changed`, `On Wave Started`, `On Wave Completed`;
+- события `On Enemy Spawned`, `On Enemy Died`, `On Enemy Count Changed`, `On Spawn Warning`.
+
+При спавне Wave Manager передаёт врагу тип и множитель сложности, подписывается на смерть/уничтожение и запускает spawn protection. Затем обычная AI-система сама выбирает актуальное состояние `Cautious` или `Rush` и распределяет роли `Chaser`, `Flanker`, `BulletBlocker`.
+
+### Безопасный Спавн
+
+Точка спавна должна находиться не ближе `Minimum Spawn Distance From Player` (`800-1200 units`). Среди допустимых точек система предпочитает:
+
+- точки вне экрана;
+- точки, закрытые геометрией по `Visibility` trace;
+- точки позади направления камеры;
+- точки ближе к краям арены.
+
+Если все точки слишком близко к игроку, спавн откладывается до следующего тика таймера. Перед появлением создаётся warning VFX и/или короткая вспышка света. Враг остаётся скрытым и безопасным во время warning, а после появления получает grace period, в течение которого не атакует и не наносит урон.
+
+Рекомендуемые диапазоны:
+
+| Поле | Диапазон |
+| --- | ---: |
+| `Spawn Warning Duration` | `0.3-0.7 s` |
+| `Spawn Grace Period` | `0.3-0.5 s` |
+| `Minimum Spawn Distance From Player` | `800-1200 units` |
+
+Debug вывод категории `LogOBWaveManager` сообщает номер и состав волны, выбранную точку, дистанцию до игрока, видимость точки, количество живых врагов и завершение волны.
 
 ## Основные Blueprint Assets
 
@@ -210,7 +269,8 @@ Flanker закрепляется в одном из четырёх сектор�
 
 | Asset | Ответственность |
 | --- | --- |
-| `BP_OBGameMode` | flow раунда, волны, классы врагов и pickup, правила спавна |
+| `BP_OBGameMode` | flow раунда, создание/поиск Wave Manager, класс pickup и рестарт |
+| `BP_OBWaveManager` | волны, состав врагов, масштабирование сложности, безопасный спавн и учёт живых врагов |
 | `BP_OBCharacter` | внешний вид игрока, оружие, анимации, звуки и feedback действий |
 | `BP_OBEnemy_Fast` | вид и feedback быстрого врага |
 | `BP_OBEnemy_Heavy` | вид и feedback тяжёлого врага |
@@ -232,11 +292,13 @@ C++ поддерживает стабильную игровую механик�
 - создание pickup и физический возврат пули в мир;
 - Niagara trail летящей пули;
 - overlap, magnet pickup и восстановление выстрела;
+- glow, вертикальный пульсирующий луч, drop trail и звук падения пули;
 - AI-преследование, окружение и touch-kill;
 - различие Fast / Heavy, pushback и stun;
 - уклонение в свободную от препятствий и врагов сторону;
 - first / third person режим и Immortal Mode;
-- короткие волны, рестарт раунда и игровая статистика;
+- централизованные волны, безопасный спавн, рестарт раунда и игровая статистика;
+- Wave UI с количеством оставшихся врагов и countdown;
 - передача gameplay state и событий в Blueprint.
 
 Оформление, VFX, звуки, модели и анимации намеренно оставлены для Blueprint.
@@ -249,15 +311,36 @@ C++ поддерживает стабильную игровую механик�
 
 | Поле | Назначение |
 | --- | --- |
-| `Use Scripted Waves` | включает короткие настроенные волны |
-| `Wave Definitions` | состав и timing каждой волны |
-| `Fast Enemy Class` / `Heavy Enemy Class` | используемые классы врагов |
+| `Wave Manager Class` | Blueprint-класс единого менеджера волн и спавна |
 | `Bullet Pickup Class` | класс физической пули |
-| `Spawn Enemies Only In Front Of Player` | запрещает спавн за спиной |
-| `Front Spawn Min Dot` | ограничивает допустимый передний сектор |
-| `Allow Any Spawn If No Front Point` | fallback, если впереди нет точки |
 | `Bullet Pickup Drop Height` | высота пули относительно точки попадания |
 | `Force Windowed Mode` | запуск прототипа в окне |
+
+Настройки состава волн, классов врагов и точек спавна в Game Mode больше не используются: они находятся в `BP_OBWaveManager`.
+
+### `BP_OBWaveManager`
+
+#### Волны И Масштабирование
+
+| Категория | Основные поля |
+| --- | --- |
+| `Waves` | `Auto Start Waves`, `Wave Definitions` |
+| `Waves / Timing` | `Initial Wait Duration`, `Intermission Duration`, `Completed State Duration` |
+| `Waves / Completion` | `Auto Complete When All Enemies Defeated` |
+| `Waves / Generated` | базовое количество, прирост врагов, частота Heavy |
+| `Waves / Scaling` | рост скорости, минимальный spawn interval, рост лимита живых |
+| `Waves / Runtime` | текущее состояние, номер волны, осталось заспавнить, живые враги, difficulty multiplier |
+
+#### Спавн
+
+| Категория | Основные поля |
+| --- | --- |
+| `Spawning` | `Fast Enemy Class`, `Heavy Enemy Class`, `Spawn Points`, базовый интервал и лимит |
+| `Spawning / Safety` | минимальная дистанция, предпочтение вне экрана, screen padding, direct-view dot |
+| `Spawning / Warning` | warning duration, grace period, Niagara effect, цвет/радиус/интенсивность вспышки |
+| `Debug` | логи, screen messages и длительность сообщений |
+
+Для настройки количества Fast и Heavy по волнам редактировать нужно `Wave Definitions` именно в `BP_OBWaveManager`. Значения из старых полей Game Mode игнорируются намеренно.
 
 ### `BP_OBCharacter`
 
@@ -371,18 +454,73 @@ Spawn/disappear VFX собираются нодами в каждом BP вра�
 | --- | --- |
 | `Pickup Sound` | звук успешного возврата пули |
 | `Pickup Effect` | Niagara при подборе |
-| `Trail Niagara System` | след летящей пули |
-| `Trail Flight Duration` / `Trail Travel Speed` | читаемая скорость полёта |
+| `Landing Metal Sound` / `Landing Mystic Sound` | металлический удар и короткий мистический отклик после падения |
+| `Landing Sound Volume` / `Landing Mystic Echo Delay` | громкость и задержка второго слоя звука |
+| `Use Sacred Drop Trail` | использует отдельный световой след падения |
+| `Sacred Drop Trail System` / `Trail Niagara System` | основной и fallback Niagara trail |
+| `Trail Flight Duration` / `Trail Travel Speed` / `Trail Max Flight Duration` | читаемая скорость и длительность полёта |
+| `Trail Tail Duration` | сколько остаётся видимым хвост после приземления |
 | `Main Mesh Scale` | размер основной пули в мире |
 | `Traveling Bullet Scale` | размер представления пули в полёте / fallback |
+| `Traveling Bullet Light Color` / `Intensity` | свет летящей пули |
 | `Pickup Radius` / `Magnet Radius` / `Magnet Speed` | forgiving pickup |
 | `Use Native Presentation Animation` | встроенные bob/spin/pulse |
+
+#### Читаемость Пули
+
+Пуля использует локальное тёплое свечение и вертикальный луч. Ground Halo удалён: дополнительного светового круга на полу нет.
+
+Настройки glow находятся в `OneBulletSettings|Readability`:
+
+| Поле | Назначение |
+| --- | --- |
+| `Glow Material` | материал мягкой ауры вокруг пули |
+| `Sacred Light Color` | цвет локального света и glow |
+| `Glow Aura Scale` | размер светящейся ауры |
+
+Настройки локального света находятся в `OneBulletSettings|Presentation`:
+
+| Поле | Назначение |
+| --- | --- |
+| `Beacon Intensity` / `Beacon Pulse Amount` | базовая яркость и амплитуда пульсации локального света |
+| `Beacon Attenuation Radius` | радиус освещения |
+
+Настройки столба находятся в `OneBulletSettings|Readability|Beam`:
+
+| Поле | Назначение |
+| --- | --- |
+| `Material` | материал вертикального луча |
+| `Color` | цвет луча; можно сделать таким же, как glow |
+| `Intensity` | HDR-множитель emissive-цвета |
+| `Height` | высота столба |
+| `Thickness` | базовая толщина столба |
+| `Pulse Amount (Brightness + Thickness)` | амплитуда одновременной пульсации яркости и реальной толщины |
+| `Pulse Speed` | скорость пульсации |
+
+Пульсация геометрии не зависит от того, поддерживает ли выбранный материал параметры `Color`, `Tint` или `Emissive Color`, поэтому изменение толщины остаётся заметным даже с простым emissive-материалом.
 
 Важно: при включённом `Use Native Presentation Animation` масштаб меша пули обновляется из `Main Mesh Scale` во время игры. Поэтому увеличить новую маленькую модель нужно именно этим полем в BP, а не `Transform / Scale` компонента. Удобная стартовая проба для маленького mesh: `Main Mesh Scale = 1.5`, `Traveling Bullet Scale = 0.3`, затем подогнать глазами.
 
 ### `WBP_OBHUD`
 
 `WBP_OBHUD` отвечает за шрифты, контейнеры, цвета, расположение, видимость и UI-анимации. C++ передаёт данные и вызывает события.
+
+Для Wave UI в виджете должны существовать Text Block с точными именами:
+
+- `WaveTxt`;
+- `EnemiesLeftTxt`.
+
+Во время активной волны UI показывает `Wave N` и `Enemies Left: N`. Счётчик включает ещё не заспавненных и уже живых врагов, поэтому уменьшается в реальном времени только после фактического устранения угрозы. После завершения выводится `Wave Cleared`, затем `Next Wave in 3...2...1`. Текст плавно появляется/исчезает и слегка масштабируется.
+
+Настройки анимации в `OneBulletSettings|HUD|Waves|Animation`:
+
+| Поле | Назначение |
+| --- | --- |
+| `Wave Text Animation Speed` | скорость fade/scale переходов |
+| `Wave Text Hidden Scale` | масштаб текста в скрытом состоянии |
+| `Wave Cleared Display Duration` | сколько показывать `Wave Cleared` до countdown |
+
+HUD самостоятельно находит `AOBWaveManager`, подписывается на его события и читает runtime-данные. Blueprint не должен хранить отдельный счётчик волн или врагов.
 
 | Getter | Значение |
 | --- | --- |
@@ -419,9 +557,12 @@ Best kills: {Best}
 
 1. В `BP_OBCharacter` проверить `Shotgun_A`, socket руки, `Fire_Shotgun_W`, player `Shoot Animation` и armed idle/run.
 2. Сделать один выстрел: дробовик должен исчезнуть в `Bullet: Lost`, а пуля вылететь от ствола.
-3. Подобрать пулю: дробовик должен вернуться, HUD - переключиться в `Bullet: Ready`.
-4. В `BP_OBBulletPickup` подобрать читаемый `Main Mesh Scale`, чтобы пуля не терялась на арене.
-5. Проверить смерть, `R`, `Shift`, `1` и `2` в Play mode.
+3. Проверить drop trail, металлический звук падения, glow и вертикальный пульсирующий луч без Ground Halo.
+4. Подобрать пулю: дробовик должен вернуться, HUD - переключиться в `Bullet: Ready`.
+5. Проверить `WaveTxt`, `EnemiesLeftTxt`, `Wave Cleared` и countdown между волнами.
+6. Убедиться, что враги не появляются ближе минимальной дистанции, получают warning и не атакуют во время grace period.
+7. Проверить в логах, что каждый враг создан `WaveManager` только один раз, а волна завершается при нулевом счётчике.
+8. Проверить смерть, `R`, `Shift`, `1` и `2` в Play mode.
 
 ## Сборка
 

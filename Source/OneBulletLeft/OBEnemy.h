@@ -32,6 +32,15 @@ enum class EOBEnemyRole : uint8
 	BulletBlocker
 };
 
+UENUM(BlueprintType)
+enum class EOBBulletGuardPriority : uint8
+{
+	None,
+	Attack,
+	Intercept,
+	Guard
+};
+
 UCLASS(PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API AOBEnemy : public ACharacter
 {
@@ -118,6 +127,21 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Rush", meta=(ClampMin="0.0", UIMin="0.0", UIMax="500.0"))
 	float BulletBlockerAcceptanceRadius = 110.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Bullet Guard", meta=(ClampMin="250.0", ClampMax="400.0", UIMin="250.0", UIMax="400.0"))
+	float BulletGuardRadius = 325.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Bullet Guard", meta=(ClampMin="500.0", ClampMax="800.0", UIMin="500.0", UIMax="800.0"))
+	float BulletGuardInterceptRadius = 650.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Bullet Guard", meta=(ClampMin="600.0", ClampMax="900.0", UIMin="600.0", UIMax="900.0"))
+	float PlayerNearBulletRadius = 750.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Bullet Guard", meta=(ClampMin="500.0", ClampMax="700.0", UIMin="500.0", UIMax="700.0"))
+	float MaxGuardDistanceFromBullet = 600.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|AI State|Bullet Guard")
+	EOBBulletGuardPriority CurrentBulletGuardPriority = EOBBulletGuardPriority::None;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|AI State|Debug")
 	bool bDrawAIRoleTargets = false;
@@ -423,6 +447,8 @@ protected:
 	float FlankSideLockRemaining = 0.0f;
 	float LockedFlankLateralOffset = 0.0f;
 	float RepathTimeJitter = 1.0f;
+	float BulletGuardDistanceToPlayer = 0.0f;
+	float BulletGuardPlayerToBulletDistance = 0.0f;
 	EOBEnemyAIState FlankerRadiusState = EOBEnemyAIState::Cautious;
 	float ActiveKickKnockbackElapsed = 0.0f;
 	float ActiveKickKnockbackDuration = 0.0f;
@@ -451,6 +477,7 @@ protected:
 	void SetAIState(EOBEnemyAIState NewState, bool bForceRefresh = false);
 	void AssignEnemyRoles();
 	void SetAssignedRole(EOBEnemyRole NewRole, int32 RoleSlot, int32 RoleCount);
+	bool UpdateBulletGuardPriority(bool bRefreshMovementOnChange = false);
 	void ApplyAIStateSpeed();
 	void ResetMovementForStateChange();
 	void ScheduleNextMoveRequest(float InitialDelay = -1.0f);
@@ -467,6 +494,7 @@ protected:
 	void DrawAIRoleTargetDebug() const;
 	const TCHAR* GetAIStateName(EOBEnemyAIState State) const;
 	const TCHAR* GetAIRoleName(EOBEnemyRole AIRole) const;
+	const TCHAR* GetBulletGuardPriorityName(EOBBulletGuardPriority Priority) const;
 	bool IsPlayerHoldingBullet() const;
 	bool IsPlayerInsideBulletAttackRadius() const;
 	bool IsPlayerDetected() const;

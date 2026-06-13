@@ -136,6 +136,10 @@ void AOBEnemy::Tick(float DeltaSeconds)
 		FlankSideLockRemaining = FMath::Max(0.0f, FlankSideLockRemaining - DeltaSeconds);
 	}
 	RefreshAIStateFromBullet();
+	if (CurrentRole == EOBEnemyRole::BulletBlocker)
+	{
+		UpdateBulletGuardPriority(true);
+	}
 
 	if (PlayerTarget && PlayerTarget->IsDead())
 	{
@@ -491,6 +495,10 @@ void AOBEnemy::NormalizePressureSettings()
 	RushFlankerDistanceMin = FMath::Max(RushFlankerDistanceMin, 0.0f);
 	RushFlankerDistanceMax = FMath::Max(RushFlankerDistanceMax, RushFlankerDistanceMin);
 	BulletBlockerAcceptanceRadius = FMath::Max(BulletBlockerAcceptanceRadius, 0.0f);
+	BulletGuardRadius = FMath::Clamp(BulletGuardRadius, 250.0f, 400.0f);
+	BulletGuardInterceptRadius = FMath::Clamp(BulletGuardInterceptRadius, 500.0f, 800.0f);
+	PlayerNearBulletRadius = FMath::Clamp(PlayerNearBulletRadius, 600.0f, 900.0f);
+	MaxGuardDistanceFromBullet = FMath::Clamp(MaxGuardDistanceFromBullet, 500.0f, 700.0f);
 	AIRoleTargetDebugSize = FMath::Max(AIRoleTargetDebugSize, 2.0f);
 	MinDistanceBetweenEnemyTargets = FMath::Max(MinDistanceBetweenEnemyTargets, 0.0f);
 	FlankRadiusMin = FMath::Max(FlankRadiusMin, 0.0f);
@@ -712,6 +720,12 @@ void AOBEnemy::SetAssignedRole(EOBEnemyRole NewRole, int32 RoleSlot, int32 RoleC
 {
 	const EOBEnemyRole PreviousRole = CurrentRole;
 	CurrentRole = NewRole;
+	if (CurrentRole != EOBEnemyRole::BulletBlocker)
+	{
+		CurrentBulletGuardPriority = EOBBulletGuardPriority::None;
+		BulletGuardDistanceToPlayer = 0.0f;
+		BulletGuardPlayerToBulletDistance = 0.0f;
+	}
 	if (CurrentRole == EOBEnemyRole::Flanker)
 	{
 		const bool bNeedsNewFlankSetup = !bHasFlankSetup
@@ -758,6 +772,88 @@ void AOBEnemy::SetAssignedRole(EOBEnemyRole NewRole, int32 RoleSlot, int32 RoleC
 			ResetMovementForStateChange();
 		}
 	}
+}
+
+bool AOBEnemy::UpdateBulletGuardPriority(bool bRefreshMovementOnChange)
+{
+	if (CurrentRole != EOBEnemyRole::BulletBlocker || !PlayerTarget || PlayerTarget->IsDead())
+	{
+		CurrentBulletGuardPriority = EOBBulletGuardPriority::None;
+		return false;
+	}
+
+	const AOBBulletPickup* BulletPickup = FindActiveBulletPickup();
+	if (!BulletPickup)
+	{
+		CurrentBulletGuardPriority = EOBBulletGuardPriority::None;
+		return false;
+	}
+
+	const FVector PlayerLocation = PlayerTarget->GetActorLocation();
+	const FVector BulletLocation = BulletPickup->GetActorLocation();
+	BulletGuardDistanceToPlayer = FVector::Dist2D(GetActorLocation(), PlayerLocation);
+	BulletGuardPlayerToBulletDistance = FVector::Dist2D(PlayerLocation, BulletLocation);
+
+	EOBBulletGuardPriority NewPriority = EOBBulletGuardPriority::Guard;
+	if (BulletGuardDistanceToPlayer <= GetEffectiveAttackRadius())
+	{
+		NewPriority = EOBBulletGuardPriority::Attack;
+	}
+	else
+	{
+		const FVector PlayerVelocityDirection = PlayerTarget->GetVelocity().GetSafeNormal2D();
+		const FVector PlayerToBulletDirection = (BulletLocation - PlayerLocation).GetSafeNormal2D();
+		const bool bPlayerMovingTowardBullet = !PlayerVelocityDirection.IsNearlyZero()
+			&& !PlayerToBulletDirection.IsNearlyZero()
+			&& FVector::DotProduct(PlayerVelocityDirection, PlayerToBulletDirection) > 0.25f;
+		const bool bPlayerNearBullet = BulletGuardPlayerToBulletDistance <= PlayerNearBulletRadius;
+		const bool bPlayerBreakingThrough = bPlayerMovingTowardBullet
+			&& BulletGuardDistanceToPlayer <= BulletGuardInterceptRadius;
+		if (bPlayerNearBullet || bPlayerBreakingThrough)
+		{
+			NewPriority = EOBBulletGuardPriority::Intercept;
+		}
+	}
+
+	const EOBBulletGuardPriority PreviousPriority = CurrentBulletGuardPriority;
+	const bool bPriorityChanged = PreviousPriority != NewPriority;
+	CurrentBulletGuardPriority = NewPriority;
+
+	if (CurrentBulletGuardPriority == EOBBulletGuardPriority::Attack && bRefreshMovementOnChange)
+	{
+		bUsingDirectMovementFallback = false;
+		CurrentApproachTarget = PlayerLocation;
+		if (AAIController* AI = Cast<AAIController>(GetController()))
+		{
+			AI->StopMovement();
+		}
+		TryTouchKill();
+	}
+
+	if (bPriorityChanged)
+	{
+		UE_LOG(
+			LogOBEnemyAI,
+			Log,
+			TEXT("%s BulletGuard priority %s -> %s, player=%.0f, player-to-bullet=%.0f"),
+			*GetName(),
+			GetBulletGuardPriorityName(PreviousPriority),
+			GetBulletGuardPriorityName(CurrentBulletGuardPriority),
+			BulletGuardDistanceToPlayer,
+			BulletGuardPlayerToBulletDistance);
+	}
+
+	if (bPriorityChanged
+		&& bRefreshMovementOnChange
+		&& CurrentBulletGuardPriority != EOBBulletGuardPriority::Attack
+		&& HasActorBegunPlay()
+		&& !bDead
+		&& !bStunned)
+	{
+		RequestMove();
+	}
+
+	return bPriorityChanged;
 }
 
 void AOBEnemy::ApplyAIStateSpeed()
@@ -897,21 +993,39 @@ FVector AOBEnemy::CalculateBulletBlockerTarget()
 		const FVector PlayerLocation = PlayerTarget->GetActorLocation();
 		const FVector BulletLocation = BulletPickup->GetActorLocation();
 		const FVector PlayerToBullet = (BulletLocation - PlayerLocation).GetSafeNormal2D();
-		const FVector SideDirection = PlayerToBullet.RotateAngleAxis(90.0f, FVector::UpVector);
-		FVector FallbackTarget = FMath::Lerp(PlayerLocation, BulletLocation, 0.5f);
-		ProjectPointToNavigation(FallbackTarget);
+		if (PlayerToBullet.IsNearlyZero())
+		{
+			return PlayerLocation;
+		}
 
-		return FindUnclaimedTarget(
-			[this, PlayerLocation, BulletLocation, SideDirection](int32 Attempt)
+		if (CurrentBulletGuardPriority == EOBBulletGuardPriority::Attack)
+		{
+			return PlayerLocation;
+		}
+
+		FVector Target = BulletLocation - PlayerToBullet * BulletGuardRadius;
+		if (CurrentBulletGuardPriority == EOBBulletGuardPriority::Intercept)
+		{
+			const float AttackRange = GetEffectiveAttackRadius();
+			const float InterceptLeadDistance = FMath::Min(
+				FMath::Max(AttackRange * 0.75f, 50.0f),
+				BulletGuardPlayerToBulletDistance * 0.5f);
+			Target = PlayerLocation + PlayerToBullet * InterceptLeadDistance;
+			const FVector BulletToTarget = Target - BulletLocation;
+			if (BulletToTarget.SizeSquared2D() > FMath::Square(MaxGuardDistanceFromBullet))
 			{
-				const float MidpointAlpha = FMath::Clamp(0.5f + FMath::FRandRange(-0.12f, 0.12f), 0.25f, 0.75f);
-				const float SideSign = ((GetUniqueID() + Attempt) & 1) == 0 ? 1.0f : -1.0f;
-				const float SideOffset = FMath::FRandRange(TargetRandomOffsetMin, TargetRandomOffsetMax) * SideSign;
-				FVector Candidate = FMath::Lerp(PlayerLocation, BulletLocation, MidpointAlpha) + SideDirection * SideOffset;
-				ProjectPointToNavigation(Candidate);
-				return Candidate;
-			},
-			FallbackTarget);
+				Target = BulletLocation + BulletToTarget.GetSafeNormal2D() * MaxGuardDistanceFromBullet;
+			}
+		}
+
+		ProjectPointToNavigation(Target);
+		const FVector BulletToProjectedTarget = Target - BulletLocation;
+		if (BulletToProjectedTarget.SizeSquared2D() > FMath::Square(MaxGuardDistanceFromBullet))
+		{
+			Target = BulletLocation + BulletToProjectedTarget.GetSafeNormal2D() * MaxGuardDistanceFromBullet;
+			ProjectPointToNavigation(Target);
+		}
+		return Target;
 	}
 
 	return CalculateFlankerTarget(false);
@@ -1048,6 +1162,21 @@ const TCHAR* AOBEnemy::GetAIRoleName(EOBEnemyRole AIRole) const
 		return TEXT("BulletBlocker");
 	default:
 		return TEXT("Unknown");
+	}
+}
+
+const TCHAR* AOBEnemy::GetBulletGuardPriorityName(EOBBulletGuardPriority Priority) const
+{
+	switch (Priority)
+	{
+	case EOBBulletGuardPriority::Attack:
+		return TEXT("Attack");
+	case EOBBulletGuardPriority::Intercept:
+		return TEXT("Intercept");
+	case EOBBulletGuardPriority::Guard:
+		return TEXT("Guard");
+	default:
+		return TEXT("None");
 	}
 }
 
@@ -1539,6 +1668,23 @@ void AOBEnemy::RequestMove()
 	{
 		bMovingToPatrolTarget = false;
 		bHasPatrolTarget = false;
+
+		if (CurrentRole == EOBEnemyRole::BulletBlocker)
+		{
+			UpdateBulletGuardPriority();
+			if (CurrentBulletGuardPriority == EOBBulletGuardPriority::Attack)
+			{
+				CurrentApproachTarget = PlayerTarget->GetActorLocation();
+				bUsingDirectMovementFallback = false;
+				if (AAIController* AI = Cast<AAIController>(GetController()))
+				{
+					AI->StopMovement();
+				}
+				TryTouchKill();
+				return;
+			}
+		}
+
 		CurrentApproachTarget = CalculateStateMovementTarget();
 
 		if (CurrentRole == EOBEnemyRole::Chaser)
@@ -1556,13 +1702,15 @@ void AOBEnemy::RequestMove()
 		}
 
 		float AcceptanceRadius = 90.0f;
-		if (CurrentAIState == EOBEnemyAIState::Cautious)
+		if (CurrentRole == EOBEnemyRole::BulletBlocker)
+		{
+			AcceptanceRadius = CurrentBulletGuardPriority == EOBBulletGuardPriority::Intercept
+				? FMath::Max(GetEffectiveAttackRadius() * 0.5f, 50.0f)
+				: BulletBlockerAcceptanceRadius;
+		}
+		else if (CurrentAIState == EOBEnemyAIState::Cautious)
 		{
 			AcceptanceRadius = 25.0f;
-		}
-		else if (CurrentRole == EOBEnemyRole::BulletBlocker)
-		{
-			AcceptanceRadius = BulletBlockerAcceptanceRadius;
 		}
 		else if (CurrentRole == EOBEnemyRole::Flanker)
 		{
@@ -1731,7 +1879,16 @@ void AOBEnemy::DrawAIRoleTargetDebug() const
 	DrawDebugString(
 		GetWorld(),
 		Target + FVector::UpVector * 24.0f,
-		FString::Printf(TEXT("%s / %s"), GetAIStateName(CurrentAIState), GetAIRoleName(CurrentRole)),
+		CurrentRole == EOBEnemyRole::BulletBlocker
+			? FString::Printf(
+				TEXT("%s / %s / %s\nTarget %s\nPlayer %.0f | Player-Bullet %.0f"),
+				GetAIStateName(CurrentAIState),
+				GetAIRoleName(CurrentRole),
+				GetBulletGuardPriorityName(CurrentBulletGuardPriority),
+				*CurrentApproachTarget.ToCompactString(),
+				BulletGuardDistanceToPlayer,
+				BulletGuardPlayerToBulletDistance)
+			: FString::Printf(TEXT("%s / %s"), GetAIStateName(CurrentAIState), GetAIRoleName(CurrentRole)),
 		nullptr,
 		RoleColor,
 		0.0f,
