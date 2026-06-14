@@ -9,6 +9,7 @@ void UOBHUDWidget::NativeConstruct()
 	Super::NativeConstruct();
 	RefreshFromGameState();
 	OnHudInitialized();
+	ApplyHudTextColors();
 
 	if (WaveTxt)
 	{
@@ -103,6 +104,24 @@ void UOBHUDWidget::RefreshFromGameState()
 	if (bChanged)
 	{
 		OnHudStateRefreshed(CurrentBulletState, CurrentKillCount, bCurrentGameOver);
+	}
+
+	ApplyHudTextColors();
+}
+
+void UOBHUDWidget::ApplyHudTextColors()
+{
+	if (BulletStatusText)
+	{
+		BulletStatusText->SetColorAndOpacity(
+			CurrentBulletState == EBulletState::Ready
+				? BulletReadyTextColor
+				: BulletLostTextColor);
+	}
+
+	if (KillCountText)
+	{
+		KillCountText->SetColorAndOpacity(KillCountTextColor);
 	}
 }
 

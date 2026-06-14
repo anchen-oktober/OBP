@@ -49,6 +49,21 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings|HUD")
 	bool bCurrentImmortalMode = false;
 
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Text")
+	TObjectPtr<UTextBlock> BulletStatusText;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Text")
+	TObjectPtr<UTextBlock> KillCountText;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|HUD|Text|Color")
+	FLinearColor BulletReadyTextColor = FLinearColor(0.35f, 1.0f, 0.55f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|HUD|Text|Color")
+	FLinearColor BulletLostTextColor = FLinearColor(1.0f, 0.45f, 0.35f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|HUD|Text|Color")
+	FLinearColor KillCountTextColor = FLinearColor::White;
+
 	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Waves")
 	TObjectPtr<UTextBlock> WaveTxt;
 
@@ -156,6 +171,7 @@ private:
 	void HideEnemiesMessage();
 	void UpdateWaveTextAnimations(float DeltaTime);
 	void UpdateCountdown(float DeltaTime);
+	void ApplyHudTextColors();
 
 	UFUNCTION()
 	void HandleWaveStateChanged(EOBWaveState NewState, EOBWaveState PreviousState);
