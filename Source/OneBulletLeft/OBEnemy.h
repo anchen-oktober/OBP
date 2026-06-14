@@ -7,6 +7,8 @@
 class AOBBulletPickup;
 class AOBEnemy;
 class UAnimationAsset;
+class UDecalComponent;
+class UMaterialInstanceDynamic;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOBEnemyDeathReportedSignature, AOBEnemy*, Enemy);
 
@@ -270,13 +272,16 @@ public:
 	float HeavyAttackRadius = 200.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Attack Radius")
-	bool bDrawAttackRadius = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Attack Radius", meta=(EditCondition="bDrawAttackRadius", ClampMin="1.0", UIMin="1.0", UIMax="10.0"))
-	float AttackRadiusDebugThickness = 3.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Attack Radius")
 	float TouchKillExtraMargin = 12.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Attack Radius")
+	TObjectPtr<UDecalComponent> HeavyAttackAura;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Attack Radius", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float HeavyAttackAuraOpacity = 0.11f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Attack Radius", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float HeavyAttackAuraReadyOpacity = 0.15f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pressure")
 	bool bUseSurroundMovement = true;
@@ -499,6 +504,9 @@ protected:
 	float ActiveLocomotionPlayRate = -1.0f;
 	UAnimationAsset* ActiveLocomotionAnimation = nullptr;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> HeavyAttackAuraMaterial;
+
 	FTimerHandle StunTimerHandle;
 	FTimerHandle MoveTimerHandle;
 	FTimerHandle RushTransitionTimerHandle;
@@ -558,6 +566,6 @@ protected:
 	void UpdateSimpleLocomotionAnimation();
 	FVector CalculateApproachTarget() const;
 	void DrawDetectionRadiusDebug() const;
-	void DrawAttackRadiusDebug() const;
+	void RefreshHeavyAttackAura();
 	void TryTouchKill();
 };

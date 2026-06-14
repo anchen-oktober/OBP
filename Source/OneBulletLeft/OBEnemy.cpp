@@ -5,16 +5,20 @@
 #include "Animation/AnimSingleNodeInstance.h"
 #include "Animation/AnimSequence.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/DecalComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "HAL/IConsoleManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "NavigationPath.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "NavigationSystem.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 #include "OBCharacter.h"
 #include "OBBulletPickup.h"
 #include "OBGameMode.h"
@@ -32,6 +36,12 @@ bool IsAnimationCompatibleWithMesh(const UAnimationAsset* Animation, const USkel
 
 bool bShowEnemyDetectionRadii = false;
 TWeakObjectPtr<UWorld> DetectionVisualizationWorld;
+
+TAutoConsoleVariable<int32> CVarHeavyAttackRadiusIndicator(
+	TEXT("onebullet.HeavyAttackRadius"),
+	1,
+	TEXT("Show the Heavy enemy attack-radius ground indicator."),
+	ECVF_Cheat);
 }
 
 AOBEnemy::AOBEnemy()
@@ -52,6 +62,22 @@ AOBEnemy::AOBEnemy()
 	GetMesh()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -92.0f));
 	GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+
+	HeavyAttackAura = CreateDefaultSubobject<UDecalComponent>(TEXT("HeavyAttackAura"));
+	HeavyAttackAura->SetupAttachment(GetRootComponent());
+	HeavyAttackAura->SetRelativeLocation(FVector(0.0f, 0.0f, -86.0f));
+	HeavyAttackAura->SetRelativeRotation(FRotator(-90.0f, 0.0f, 0.0f));
+	HeavyAttackAura->DecalSize = FVector(80.0f, HeavyAttackRadius, HeavyAttackRadius);
+	HeavyAttackAura->SortOrder = -2;
+	HeavyAttackAura->SetVisibility(false);
+	HeavyAttackAura->SetHiddenInGame(true);
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> HeavyAuraMaterial(
+		TEXT("/Game/OneBullet/Materials/M_HeavyAttackAuraDecal.M_HeavyAttackAuraDecal"));
+	if (HeavyAuraMaterial.Succeeded())
+	{
+		HeavyAttackAura->SetDecalMaterial(HeavyAuraMaterial.Object);
+	}
 
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> MannyMesh(TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
 	if (MannyMesh.Succeeded())
@@ -91,6 +117,7 @@ void AOBEnemy::BeginPlay()
 	GetCharacterMovement()->bUseControllerDesiredRotation = false;
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, RotationRateYaw, 0.0f);
 	PlayerTarget = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0));
+	RefreshHeavyAttackAura();
 	PatrolOrigin = PatrolCenter;
 	PatrolOrigin.Z = GetActorLocation().Z;
 	LastPatrolLocation = PatrolOrigin;
@@ -174,8 +201,8 @@ void AOBEnemy::Tick(float DeltaSeconds)
 	UpdateLocomotionState(DeltaSeconds);
 	UpdateSimpleLocomotionAnimation();
 	TryTouchKill();
+	RefreshHeavyAttackAura();
 	DrawDetectionRadiusDebug();
-	DrawAttackRadiusDebug();
 	DrawAIRoleTargetDebug();
 }
 
@@ -197,6 +224,7 @@ void AOBEnemy::Configure(EOBEnemyType NewType)
 	}
 
 	ApplyAIStateSpeed();
+	RefreshHeavyAttackAura();
 }
 
 void AOBEnemy::SetDifficultySpeedMultiplier(float NewMultiplier)
@@ -213,6 +241,7 @@ void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
 	}
 
 	bDead = true;
+	RefreshHeavyAttackAura();
 	OnDeathReported.Broadcast(this);
 	GetWorldTimerManager().ClearTimer(MoveTimerHandle);
 	GetWorldTimerManager().ClearTimer(RushTransitionTimerHandle);
@@ -358,6 +387,7 @@ void AOBEnemy::FinishSpawnWarning()
 
 	bSpawnWarningActive = false;
 	SetActorHiddenInGame(false);
+	RefreshHeavyAttackAura();
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 	ApplyAIStateSpeed();
@@ -476,7 +506,8 @@ void AOBEnemy::NormalizePressureSettings()
 	PatrolObstacleProbeRadius = FMath::Max(PatrolObstacleProbeRadius, 0.0f);
 	FastAttackRadius = FMath::Max(FastAttackRadius, 0.0f);
 	HeavyAttackRadius = FMath::Max(HeavyAttackRadius, FastAttackRadius);
-	AttackRadiusDebugThickness = FMath::Max(AttackRadiusDebugThickness, 1.0f);
+	HeavyAttackAuraOpacity = FMath::Clamp(HeavyAttackAuraOpacity, 0.0f, 0.15f);
+	HeavyAttackAuraReadyOpacity = FMath::Clamp(HeavyAttackAuraReadyOpacity, HeavyAttackAuraOpacity, 0.20f);
 
 	RushTransitionDelayMin = FMath::Max(RushTransitionDelayMin, 0.0f);
 	RushTransitionDelayMax = FMath::Max(RushTransitionDelayMax, RushTransitionDelayMin);
@@ -1886,45 +1917,46 @@ float AOBEnemy::GetEffectiveAttackRadius() const
 	return FMath::Max(ConfiguredRadius, EnemyRadius + PlayerRadius + TouchKillExtraMargin);
 }
 
-void AOBEnemy::DrawAttackRadiusDebug() const
+void AOBEnemy::RefreshHeavyAttackAura()
 {
-	if (!bDrawAttackRadius || bDead || !GetWorld())
+	if (!HeavyAttackAura)
 	{
 		return;
+	}
+
+	const bool bShouldShow = EnemyType == EOBEnemyType::Heavy
+		&& !bDead
+		&& !bSpawnWarningActive
+		&& CVarHeavyAttackRadiusIndicator.GetValueOnGameThread() != 0;
+	HeavyAttackAura->SetVisibility(bShouldShow, true);
+	HeavyAttackAura->SetHiddenInGame(!bShouldShow);
+	if (!bShouldShow)
+	{
+		return;
+	}
+
+	if (!HeavyAttackAuraMaterial)
+	{
+		HeavyAttackAuraMaterial = HeavyAttackAura->CreateDynamicMaterialInstance();
 	}
 
 	const float AttackRadius = GetEffectiveAttackRadius();
-	if (AttackRadius <= 0.0f)
-	{
-		return;
-	}
+	HeavyAttackAura->SetRelativeLocation(FVector(
+		0.0f,
+		0.0f,
+		-GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 6.0f));
+	HeavyAttackAura->SetRelativeRotation(FRotator(-90.0f, 0.0f, 0.0f));
+	HeavyAttackAura->DecalSize = FVector(80.0f, AttackRadius, AttackRadius);
 
-	const FVector Center = GetActorLocation() + FVector::UpVector * 10.0f;
-	const FColor RadiusColor = EnemyType == EOBEnemyType::Heavy
-		? FColor(255, 48, 24)
-		: FColor(255, 180, 32);
-	DrawDebugCircle(
-		GetWorld(),
-		Center,
-		AttackRadius,
-		64,
-		RadiusColor,
-		false,
-		0.0f,
-		0,
-		AttackRadiusDebugThickness,
-		FVector::ForwardVector,
-		FVector::RightVector,
-		false);
-	DrawDebugString(
-		GetWorld(),
-		Center + FVector::UpVector * 24.0f,
-		FString::Printf(TEXT("Attack %.0f cm"), AttackRadius),
-		nullptr,
-		RadiusColor,
-		0.0f,
-		false,
-		1.0f);
+	if (HeavyAttackAuraMaterial)
+	{
+		const bool bPlayerNearAttackRange = PlayerTarget
+			&& FVector::DistSquared2D(GetActorLocation(), PlayerTarget->GetActorLocation())
+				<= FMath::Square(AttackRadius * 1.35f);
+		HeavyAttackAuraMaterial->SetScalarParameterValue(
+			TEXT("Opacity"),
+			bPlayerNearAttackRange ? HeavyAttackAuraReadyOpacity : HeavyAttackAuraOpacity);
+	}
 }
 
 void AOBEnemy::DrawAIRoleTargetDebug() const
