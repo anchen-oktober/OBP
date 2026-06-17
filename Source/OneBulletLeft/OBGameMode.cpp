@@ -9,6 +9,8 @@
 #include "OBCharacter.h"
 #include "OBGameState.h"
 #include "OBHUD.h"
+#include "OBPanicAudioManager.h"
+#include "UObject/ConstructorHelpers.h"
 
 AOBGameMode::AOBGameMode()
 {
@@ -17,6 +19,13 @@ AOBGameMode::AOBGameMode()
 	HUDClass = AOBHUD::StaticClass();
 	BulletPickupClass = AOBBulletPickup::StaticClass();
 	WaveManagerClass = AOBWaveManager::StaticClass();
+	PanicAudioManagerClass = AOBPanicAudioManager::StaticClass();
+
+	static ConstructorHelpers::FClassFinder<AOBPanicAudioManager> PanicAudioManagerBP(TEXT("/Game/OneBullet/Blueprints/BP_PanicAudioManager"));
+	if (PanicAudioManagerBP.Succeeded())
+	{
+		PanicAudioManagerClass = PanicAudioManagerBP.Class;
+	}
 }
 
 void AOBGameMode::BeginPlay()
@@ -32,6 +41,7 @@ void AOBGameMode::BeginPlay()
 	}
 
 	InitializeWaveManager();
+	InitializePanicAudioManager();
 }
 
 void AOBGameMode::ApplyWindowMode()
@@ -88,6 +98,30 @@ void AOBGameMode::InitializeWaveManager()
 
 }
 
+void AOBGameMode::InitializePanicAudioManager()
+{
+	for (TActorIterator<AOBPanicAudioManager> It(GetWorld()); It; ++It)
+	{
+		PanicAudioManager = *It;
+		break;
+	}
+
+	if (!PanicAudioManager)
+	{
+		TSubclassOf<AOBPanicAudioManager> ClassToSpawn = PanicAudioManagerClass;
+		if (!ClassToSpawn)
+		{
+			ClassToSpawn = AOBPanicAudioManager::StaticClass();
+		}
+		PanicAudioManager = GetWorld()->SpawnActor<AOBPanicAudioManager>(ClassToSpawn);
+	}
+
+	if (!PanicAudioManager)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Unable to create PanicAudioManager"));
+	}
+}
+
 AOBBulletPickup* AOBGameMode::SpawnBulletPickup(const FVector& DropLocation)
 {
 	if (!BulletPickupClass)
@@ -122,6 +156,8 @@ void AOBGameMode::PlayBulletFlight(const FVector& TraceStart, const FVector& Tra
 
 void AOBGameMode::RestartRun(AOBCharacter* Player)
 {
+	StopPanicAudio(nullptr, false);
+
 	if (WaveManager)
 	{
 		WaveManager->StopWaves();
@@ -159,6 +195,66 @@ void AOBGameMode::RestartRun(AOBCharacter* Player)
 		{
 			WaveManager->StartWaves();
 		}
+	}
+}
+
+void AOBGameMode::StartPanicAudioAfterShot(AActor* AudioFocus)
+{
+	if (!PanicAudioManager)
+	{
+		InitializePanicAudioManager();
+	}
+
+	if (PanicAudioManager)
+	{
+		PanicAudioManager->StartPanicAudio(AudioFocus);
+	}
+}
+
+void AOBGameMode::HandlePlayerShot(AActor* AudioFocus)
+{
+	if (!PanicAudioManager)
+	{
+		InitializePanicAudioManager();
+	}
+
+	if (PanicAudioManager)
+	{
+		PanicAudioManager->HandlePlayerShot(AudioFocus);
+	}
+}
+
+void AOBGameMode::HandleBulletPickedUp(AActor* AudioFocus)
+{
+	if (!PanicAudioManager)
+	{
+		InitializePanicAudioManager();
+	}
+
+	if (PanicAudioManager)
+	{
+		PanicAudioManager->HandleBulletPickedUp(AudioFocus);
+	}
+}
+
+void AOBGameMode::StopPanicAudio(AActor* AudioFocus, bool bPlayBulletPickupSound)
+{
+	if (PanicAudioManager)
+	{
+		PanicAudioManager->StopPanicAudio(AudioFocus, bPlayBulletPickupSound);
+	}
+}
+
+void AOBGameMode::PlayShotSound(AActor* AudioFocus)
+{
+	if (!PanicAudioManager)
+	{
+		InitializePanicAudioManager();
+	}
+
+	if (PanicAudioManager)
+	{
+		PanicAudioManager->PlayShotSound(AudioFocus);
 	}
 }
 

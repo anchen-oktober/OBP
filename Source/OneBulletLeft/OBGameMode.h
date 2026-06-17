@@ -7,6 +7,7 @@
 
 class AOBBulletPickup;
 class AOBCharacter;
+class AOBPanicAudioManager;
 
 UCLASS(PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API AOBGameMode : public AGameModeBase
@@ -39,6 +40,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Bullet")
 	float BulletPickupDropHeight = 5.0f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio")
+	TSubclassOf<AOBPanicAudioManager> PanicAudioManagerClass;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="OneBulletSettings|Panic Audio")
+	TObjectPtr<AOBPanicAudioManager> PanicAudioManager;
+
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Bullet")
 	AOBBulletPickup* SpawnBulletPickup(const FVector& DropLocation);
 
@@ -50,6 +57,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Flow")
 	void RestartRun(AOBCharacter* Player);
 
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Panic Audio")
+	void StartPanicAudioAfterShot(AActor* AudioFocus);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Panic Audio")
+	void HandlePlayerShot(AActor* AudioFocus);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Panic Audio")
+	void HandleBulletPickedUp(AActor* AudioFocus);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Panic Audio")
+	void StopPanicAudio(AActor* AudioFocus = nullptr, bool bPlayBulletPickupSound = true);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Panic Audio")
+	void PlayShotSound(AActor* AudioFocus);
+
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Waves")
 	AOBWaveManager* GetWaveManager() const { return WaveManager; }
 
@@ -58,6 +80,7 @@ protected:
 
 	void ApplyWindowMode();
 	void InitializeWaveManager();
+	void InitializePanicAudioManager();
 	void DestroyRunActors();
 	bool FindRestartTransform(FVector& OutLocation, FRotator& OutRotation) const;
 };

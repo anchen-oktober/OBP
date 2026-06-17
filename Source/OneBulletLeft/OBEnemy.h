@@ -415,6 +415,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void ApplyKick(const FVector& KickDirection);
 
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Relief")
+	void ApplyBulletPickupReliefReaction(AActor* PlayerActor, float SlowDuration, float SpeedMultiplier, float StepBackDistance, float StepBackDuration);
+
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Events")
 	void TriggerSpawnFeedback();
 
@@ -487,6 +490,7 @@ protected:
 	float PatrolStuckTime = 0.0f;
 	float CurrentStateSpeedMultiplier = 1.0f;
 	float DifficultySpeedMultiplier = 1.0f;
+	float ReliefSpeedMultiplier = 1.0f;
 	float CurrentStateElapsed = 0.0f;
 	float FlankerSlotAngleDegrees = 90.0f;
 	float CurrentFlankerOffsetDistance = 450.0f;
@@ -512,8 +516,10 @@ protected:
 	FTimerHandle RushTransitionTimerHandle;
 	FTimerHandle SpawnWarningTimerHandle;
 	FTimerHandle SpawnGraceTimerHandle;
+	FTimerHandle ReliefReactionTimerHandle;
 
 	void ResumeAfterStun();
+	void FinishBulletPickupReliefReaction();
 	void FinishSpawnWarning();
 	void FinishSpawnProtection();
 	void BeginKickKnockback(const FVector& KnockbackDirection, float Distance, float Duration, float StunDuration);

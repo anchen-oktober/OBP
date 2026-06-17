@@ -308,6 +308,43 @@ void AOBEnemy::ApplyKick(const FVector& KickDirection)
 	}
 }
 
+void AOBEnemy::ApplyBulletPickupReliefReaction(AActor* PlayerActor, float SlowDuration, float SpeedMultiplier, float StepBackDistance, float StepBackDuration)
+{
+	if (bDead)
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(ReliefReactionTimerHandle);
+	SetAIState(EOBEnemyAIState::Cautious, true);
+
+	ReliefSpeedMultiplier = FMath::Clamp(SpeedMultiplier, 0.0f, 1.0f);
+	ApplyAIStateSpeed();
+
+	FVector AwayFromPlayer = FVector::ZeroVector;
+	if (PlayerActor)
+	{
+		AwayFromPlayer = (GetActorLocation() - PlayerActor->GetActorLocation()).GetSafeNormal2D();
+	}
+	if (AwayFromPlayer.IsNearlyZero())
+	{
+		AwayFromPlayer = -GetActorForwardVector().GetSafeNormal2D();
+	}
+
+	BeginKickKnockback(
+		AwayFromPlayer,
+		FMath::Max(StepBackDistance, 0.0f),
+		FMath::Max(StepBackDuration, 0.01f),
+		FMath::Max(StepBackDuration, 0.01f));
+
+	GetWorldTimerManager().SetTimer(
+		ReliefReactionTimerHandle,
+		this,
+		&AOBEnemy::FinishBulletPickupReliefReaction,
+		FMath::Max(SlowDuration, StepBackDuration),
+		false);
+}
+
 void AOBEnemy::TriggerSpawnFeedback()
 {
 	if (SpawnSound)
@@ -420,6 +457,17 @@ void AOBEnemy::ResumeAfterStun()
 {
 	bStunned = false;
 	RequestMove();
+}
+
+void AOBEnemy::FinishBulletPickupReliefReaction()
+{
+	ReliefSpeedMultiplier = 1.0f;
+	ApplyAIStateSpeed();
+	SetAIState(EOBEnemyAIState::Cautious, true);
+	if (!bDead && !bStunned)
+	{
+		RequestMove();
+	}
 }
 
 void AOBEnemy::BeginKickKnockback(const FVector& KnockbackDirection, float Distance, float Duration, float StunDuration)
@@ -895,7 +943,8 @@ void AOBEnemy::ApplyAIStateSpeed()
 	GetCharacterMovement()->MaxWalkSpeed =
 		BaseSpeed
 		* FMath::Max(CurrentStateSpeedMultiplier, 0.0f)
-		* FMath::Max(DifficultySpeedMultiplier, 0.0f);
+		* FMath::Max(DifficultySpeedMultiplier, 0.0f)
+		* FMath::Max(ReliefSpeedMultiplier, 0.0f);
 }
 
 void AOBEnemy::ResetMovementForStateChange()

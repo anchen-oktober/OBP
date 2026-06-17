@@ -226,12 +226,9 @@ void AOBCharacter::Shoot()
 	PlayActionAnimation(ShootAnimation, ShootAnimationDuration);
 	PlayShootEffect();
 	PlayWeaponShootAnimation();
-	if (ShootSound)
+	if (AOBGameMode* OneBulletMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOBGameMode>() : nullptr)
 	{
-		const FVector SoundLocation = WeaponMesh
-			? WeaponMesh->GetSocketLocation(ShootEffectSocketName)
-			: GetActorLocation();
-		UGameplayStatics::PlaySoundAtLocation(this, ShootSound, SoundLocation);
+		OneBulletMode->HandlePlayerShot(this);
 	}
 	SetWeaponBulletReady(false);
 
@@ -386,6 +383,10 @@ void AOBCharacter::RecoverBullet()
 		OneBulletState->SetBulletReady(true);
 		SetWeaponBulletReady(true);
 	}
+	if (AOBGameMode* OneBulletMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOBGameMode>() : nullptr)
+	{
+		OneBulletMode->HandleBulletPickedUp(this);
+	}
 }
 
 void AOBCharacter::ConfirmPickupFeedback(const FVector& PickupLocation)
@@ -442,6 +443,10 @@ void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& 
 	ActiveDodgePreviousAlpha = 0.0f;
 	RemainingRecoilPitch = 0.0f;
 	SetWeaponBulletReady(true, true);
+	if (AOBGameMode* OneBulletMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOBGameMode>() : nullptr)
+	{
+		OneBulletMode->StopPanicAudio(nullptr, false);
+	}
 
 	GetWorldTimerManager().ClearTimer(KickCooldownTimerHandle);
 	GetWorldTimerManager().ClearTimer(DodgeCooldownTimerHandle);

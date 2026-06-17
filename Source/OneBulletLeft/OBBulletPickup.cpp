@@ -472,10 +472,6 @@ void AOBBulletPickup::Collect(AOBCharacter* Player)
 	Player->RecoverBullet();
 	Player->ConfirmPickupFeedback(GetActorLocation());
 	OnPickupCollected(Player);
-	if (PickupSound)
-	{
-		UGameplayStatics::PlaySoundAtLocation(this, PickupSound, GetActorLocation());
-	}
 	if (PickupEffect)
 	{
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, PickupEffect, GetActorLocation(), GetActorRotation());
