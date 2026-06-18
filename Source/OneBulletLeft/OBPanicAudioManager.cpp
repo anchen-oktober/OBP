@@ -243,11 +243,20 @@ void AOBPanicAudioManager::ApplyReliefReactionToEnemies(AActor* PlayerActor)
 			continue;
 		}
 
-		const float SlowDuration = FMath::FRandRange(ReliefSlowDurationMin, ReliefSlowDurationMax);
-		const float SpeedMultiplier = FMath::FRandRange(ReliefSpeedMultiplierMin, ReliefSpeedMultiplierMax);
-		const float StepBackDistance = FMath::FRandRange(ReliefStepBackDistanceMin, ReliefStepBackDistanceMax);
-		const float StepBackDuration = FMath::FRandRange(ReliefStepBackDurationMin, ReliefStepBackDurationMax);
-		Enemy->ApplyBulletPickupReliefReaction(Player, SlowDuration, SpeedMultiplier, StepBackDistance, StepBackDuration);
+		Enemy->ApplyBulletPickupReliefReaction(
+			Player,
+			FMath::Max(FearDuration, 0.0f),
+			FMath::Clamp(FearSpeedMultiplier, 0.0f, 1.0f),
+			FMath::Max(RetreatDistanceMin, 0.0f),
+			FMath::Max(RetreatDistanceMax, RetreatDistanceMin),
+			FMath::Max(RetreatDurationMin, 0.01f),
+			FMath::Max(RetreatDurationMax, RetreatDurationMin),
+			FMath::Max(RetreatAngleVariation, 0.0f),
+			FMath::Max(ExtraSafeDistance, 0.0f),
+			FMath::Max(ReactionDelayMin, 0.0f),
+			FMath::Max(ReactionDelayMax, ReactionDelayMin),
+			FMath::Clamp(ReactionPauseSpeedMultiplierMin, 0.0f, 1.0f),
+			FMath::Clamp(ReactionPauseSpeedMultiplierMax, ReactionPauseSpeedMultiplierMin, 1.0f));
 	}
 }
 

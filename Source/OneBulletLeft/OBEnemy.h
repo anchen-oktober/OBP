@@ -416,7 +416,20 @@ public:
 	void ApplyKick(const FVector& KickDirection);
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Relief")
-	void ApplyBulletPickupReliefReaction(AActor* PlayerActor, float SlowDuration, float SpeedMultiplier, float StepBackDistance, float StepBackDuration);
+	void ApplyBulletPickupReliefReaction(
+		AActor* PlayerActor,
+		float FearDuration,
+		float FearSpeedMultiplier,
+		float RetreatDistanceMin,
+		float RetreatDistanceMax,
+		float RetreatDurationMin,
+		float RetreatDurationMax,
+		float RetreatAngleVariation,
+		float ExtraSafeDistance,
+		float ReactionDelayMin,
+		float ReactionDelayMax,
+		float ReactionPauseSpeedMultiplierMin,
+		float ReactionPauseSpeedMultiplierMax);
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Events")
 	void TriggerSpawnFeedback();
@@ -479,6 +492,8 @@ protected:
 	bool bHasFlankSetup = false;
 	bool bSpawnProtected = false;
 	bool bSpawnWarningActive = false;
+	bool bBulletPickupReactionPaused = false;
+	bool bBulletPickupFearActive = false;
 	FVector PatrolOrigin = FVector::ZeroVector;
 	FVector CurrentPatrolTarget = FVector::ZeroVector;
 	FVector CurrentApproachTarget = FVector::ZeroVector;
@@ -491,6 +506,12 @@ protected:
 	float CurrentStateSpeedMultiplier = 1.0f;
 	float DifficultySpeedMultiplier = 1.0f;
 	float ReliefSpeedMultiplier = 1.0f;
+	float BulletPickupFearExtraSafeDistance = 0.0f;
+	float PendingBulletPickupFearDuration = 0.0f;
+	float PendingBulletPickupFearSpeedMultiplier = 1.0f;
+	float PendingBulletPickupRetreatDistance = 0.0f;
+	float PendingBulletPickupRetreatDuration = 0.0f;
+	float PendingBulletPickupRetreatAngleVariation = 0.0f;
 	float CurrentStateElapsed = 0.0f;
 	float FlankerSlotAngleDegrees = 90.0f;
 	float CurrentFlankerOffsetDistance = 450.0f;
@@ -511,14 +532,20 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> HeavyAttackAuraMaterial;
 
+	UPROPERTY(Transient)
+	TWeakObjectPtr<AActor> PendingBulletPickupReactionPlayer;
+
 	FTimerHandle StunTimerHandle;
 	FTimerHandle MoveTimerHandle;
 	FTimerHandle RushTransitionTimerHandle;
 	FTimerHandle SpawnWarningTimerHandle;
 	FTimerHandle SpawnGraceTimerHandle;
 	FTimerHandle ReliefReactionTimerHandle;
+	FTimerHandle BulletPickupFearTimerHandle;
 
 	void ResumeAfterStun();
+	void StartBulletPickupRetreatReaction();
+	void StartBulletPickupFearState();
 	void FinishBulletPickupReliefReaction();
 	void FinishSpawnWarning();
 	void FinishSpawnProtection();

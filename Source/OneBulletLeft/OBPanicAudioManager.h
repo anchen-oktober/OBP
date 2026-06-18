@@ -200,6 +200,42 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
 	float PickupReliefFadeOut = 1.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", UIMin="0.5", UIMax="3.0"))
+	float FearDuration = 1.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", ClampMax="1.0", UIMin="0.6", UIMax="0.7"))
+	float FearSpeedMultiplier = 0.65f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", UIMin="100.0", UIMax="400.0"))
+	float RetreatDistanceMin = 150.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", UIMin="100.0", UIMax="400.0"))
+	float RetreatDistanceMax = 250.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", ClampMax="90.0", UIMin="0.0", UIMax="45.0"))
+	float RetreatAngleVariation = 25.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", UIMin="100.0", UIMax="500.0"))
+	float ExtraSafeDistance = 250.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", UIMin="0.05", UIMax="0.5"))
+	float ReactionDelayMin = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", UIMin="0.05", UIMax="0.5"))
+	float ReactionDelayMax = 0.30f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", UIMin="0.05", UIMax="0.5"))
+	float RetreatDurationMin = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", UIMin="0.05", UIMax="0.5"))
+	float RetreatDurationMax = 0.30f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", ClampMax="1.0", UIMin="0.1", UIMax="0.2"))
+	float ReactionPauseSpeedMultiplierMin = 0.10f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Bullet Pickup Fear", meta=(ClampMin="0.0", ClampMax="1.0", UIMin="0.1", UIMax="0.2"))
+	float ReactionPauseSpeedMultiplierMax = 0.20f;
+
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Panic Audio")
 	void HandlePlayerShot(AActor* AudioFocus = nullptr);
 
@@ -261,15 +297,6 @@ protected:
 	static constexpr float RoarDelayAfterLowDrone = 0.08f;
 	static constexpr float FootstepsDelayAfterRoar = 0.12f;
 	static constexpr float ShotPitch = 1.0f;
-	static constexpr float ReliefSlowDurationMin = 1.0f;
-	static constexpr float ReliefSlowDurationMax = 1.5f;
-	static constexpr float ReliefSpeedMultiplierMin = 0.6f;
-	static constexpr float ReliefSpeedMultiplierMax = 0.7f;
-	static constexpr float ReliefStepBackDistanceMin = 50.0f;
-	static constexpr float ReliefStepBackDistanceMax = 100.0f;
-	static constexpr float ReliefStepBackDurationMin = 0.3f;
-	static constexpr float ReliefStepBackDurationMax = 0.5f;
-
 	FTimerHandle PanicAudioDelayTimerHandle;
 	FTimerHandle LowDroneStartTimerHandle;
 	FTimerHandle RoarStartTimerHandle;

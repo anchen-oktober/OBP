@@ -247,6 +247,8 @@ void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
 	GetWorldTimerManager().ClearTimer(RushTransitionTimerHandle);
 	GetWorldTimerManager().ClearTimer(SpawnWarningTimerHandle);
 	GetWorldTimerManager().ClearTimer(SpawnGraceTimerHandle);
+	GetWorldTimerManager().ClearTimer(ReliefReactionTimerHandle);
+	GetWorldTimerManager().ClearTimer(BulletPickupFearTimerHandle);
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetCharacterMovement()->StopMovementImmediately();
 	GetCharacterMovement()->DisableMovement();
@@ -308,40 +310,67 @@ void AOBEnemy::ApplyKick(const FVector& KickDirection)
 	}
 }
 
-void AOBEnemy::ApplyBulletPickupReliefReaction(AActor* PlayerActor, float SlowDuration, float SpeedMultiplier, float StepBackDistance, float StepBackDuration)
+void AOBEnemy::ApplyBulletPickupReliefReaction(
+	AActor* PlayerActor,
+	float FearDuration,
+	float FearSpeedMultiplier,
+	float RetreatDistanceMin,
+	float RetreatDistanceMax,
+	float RetreatDurationMin,
+	float RetreatDurationMax,
+	float RetreatAngleVariation,
+	float ExtraSafeDistance,
+	float ReactionDelayMin,
+	float ReactionDelayMax,
+	float ReactionPauseSpeedMultiplierMin,
+	float ReactionPauseSpeedMultiplierMax)
 {
-	if (bDead)
+	if (bDead || !GetWorld())
 	{
 		return;
 	}
 
 	GetWorldTimerManager().ClearTimer(ReliefReactionTimerHandle);
+	GetWorldTimerManager().ClearTimer(BulletPickupFearTimerHandle);
+	GetWorldTimerManager().ClearTimer(RushTransitionTimerHandle);
 	SetAIState(EOBEnemyAIState::Cautious, true);
 
-	ReliefSpeedMultiplier = FMath::Clamp(SpeedMultiplier, 0.0f, 1.0f);
+	const float SafeReactionDelayMin = FMath::Max(ReactionDelayMin, 0.0f);
+	const float SafeReactionDelayMax = FMath::Max(ReactionDelayMax, SafeReactionDelayMin);
+	const float SafeRetreatDistanceMin = FMath::Max(RetreatDistanceMin, 0.0f);
+	const float SafeRetreatDistanceMax = FMath::Max(RetreatDistanceMax, SafeRetreatDistanceMin);
+	const float SafeRetreatDurationMin = FMath::Max(RetreatDurationMin, 0.01f);
+	const float SafeRetreatDurationMax = FMath::Max(RetreatDurationMax, SafeRetreatDurationMin);
+	const float SafePauseSpeedMin = FMath::Clamp(ReactionPauseSpeedMultiplierMin, 0.0f, 1.0f);
+	const float SafePauseSpeedMax = FMath::Clamp(ReactionPauseSpeedMultiplierMax, SafePauseSpeedMin, 1.0f);
+
+	PendingBulletPickupReactionPlayer = PlayerActor;
+	PendingBulletPickupFearDuration = FMath::Max(FearDuration, 0.0f);
+	PendingBulletPickupFearSpeedMultiplier = FMath::Clamp(FearSpeedMultiplier, 0.0f, 1.0f);
+	PendingBulletPickupRetreatDistance = FMath::FRandRange(SafeRetreatDistanceMin, SafeRetreatDistanceMax);
+	PendingBulletPickupRetreatDuration = FMath::FRandRange(SafeRetreatDurationMin, SafeRetreatDurationMax);
+	PendingBulletPickupRetreatAngleVariation = FMath::Max(RetreatAngleVariation, 0.0f);
+	BulletPickupFearExtraSafeDistance = FMath::Max(ExtraSafeDistance, 0.0f);
+	bBulletPickupReactionPaused = true;
+	bBulletPickupFearActive = false;
+	bRushTransitionPending = false;
+	bUsingDirectMovementFallback = false;
+	bMovingToPatrolTarget = false;
+	bHasPatrolTarget = false;
+
+	ReliefSpeedMultiplier = FMath::FRandRange(SafePauseSpeedMin, SafePauseSpeedMax);
 	ApplyAIStateSpeed();
-
-	FVector AwayFromPlayer = FVector::ZeroVector;
-	if (PlayerActor)
+	GetCharacterMovement()->StopMovementImmediately();
+	if (AAIController* AI = Cast<AAIController>(GetController()))
 	{
-		AwayFromPlayer = (GetActorLocation() - PlayerActor->GetActorLocation()).GetSafeNormal2D();
+		AI->StopMovement();
 	}
-	if (AwayFromPlayer.IsNearlyZero())
-	{
-		AwayFromPlayer = -GetActorForwardVector().GetSafeNormal2D();
-	}
-
-	BeginKickKnockback(
-		AwayFromPlayer,
-		FMath::Max(StepBackDistance, 0.0f),
-		FMath::Max(StepBackDuration, 0.01f),
-		FMath::Max(StepBackDuration, 0.01f));
-
+	GetWorldTimerManager().ClearTimer(MoveTimerHandle);
 	GetWorldTimerManager().SetTimer(
 		ReliefReactionTimerHandle,
 		this,
-		&AOBEnemy::FinishBulletPickupReliefReaction,
-		FMath::Max(SlowDuration, StepBackDuration),
+		&AOBEnemy::StartBulletPickupRetreatReaction,
+		FMath::FRandRange(SafeReactionDelayMin, SafeReactionDelayMax),
 		false);
 }
 
@@ -449,6 +478,8 @@ void AOBEnemy::Disappear()
 	bDisappearing = true;
 	GetWorldTimerManager().ClearTimer(SpawnWarningTimerHandle);
 	GetWorldTimerManager().ClearTimer(SpawnGraceTimerHandle);
+	GetWorldTimerManager().ClearTimer(ReliefReactionTimerHandle);
+	GetWorldTimerManager().ClearTimer(BulletPickupFearTimerHandle);
 	OnEnemyDisappearing(EnemyType, GetActorLocation());
 	Destroy();
 }
@@ -461,13 +492,88 @@ void AOBEnemy::ResumeAfterStun()
 
 void AOBEnemy::FinishBulletPickupReliefReaction()
 {
+	bBulletPickupReactionPaused = false;
+	bBulletPickupFearActive = false;
+	BulletPickupFearExtraSafeDistance = 0.0f;
+	PendingBulletPickupReactionPlayer.Reset();
 	ReliefSpeedMultiplier = 1.0f;
 	ApplyAIStateSpeed();
 	SetAIState(EOBEnemyAIState::Cautious, true);
+	if (!IsPlayerHoldingBullet())
+	{
+		ScheduleRushTransition();
+	}
 	if (!bDead && !bStunned)
 	{
 		RequestMove();
 	}
+}
+
+void AOBEnemy::StartBulletPickupRetreatReaction()
+{
+	if (bDead)
+	{
+		return;
+	}
+
+	bBulletPickupReactionPaused = false;
+	ReliefSpeedMultiplier = 1.0f;
+	ApplyAIStateSpeed();
+
+	AActor* PlayerActor = PendingBulletPickupReactionPlayer.Get();
+	FVector AwayFromPlayer = FVector::ZeroVector;
+	if (PlayerActor)
+	{
+		AwayFromPlayer = (GetActorLocation() - PlayerActor->GetActorLocation()).GetSafeNormal2D();
+	}
+	if (AwayFromPlayer.IsNearlyZero())
+	{
+		AwayFromPlayer = -GetActorForwardVector().GetSafeNormal2D();
+	}
+	if (!AwayFromPlayer.IsNearlyZero() && PendingBulletPickupRetreatAngleVariation > 0.0f)
+	{
+		AwayFromPlayer = AwayFromPlayer
+			.RotateAngleAxis(FMath::FRandRange(-PendingBulletPickupRetreatAngleVariation, PendingBulletPickupRetreatAngleVariation), FVector::UpVector)
+			.GetSafeNormal2D();
+	}
+
+	BeginKickKnockback(
+		AwayFromPlayer,
+		PendingBulletPickupRetreatDistance,
+		PendingBulletPickupRetreatDuration,
+		PendingBulletPickupRetreatDuration);
+
+	GetWorldTimerManager().SetTimer(
+		ReliefReactionTimerHandle,
+		this,
+		&AOBEnemy::StartBulletPickupFearState,
+		FMath::Max(PendingBulletPickupRetreatDuration, 0.01f),
+		false);
+}
+
+void AOBEnemy::StartBulletPickupFearState()
+{
+	if (bDead)
+	{
+		return;
+	}
+
+	bBulletPickupFearActive = PendingBulletPickupFearDuration > KINDA_SMALL_NUMBER;
+	ReliefSpeedMultiplier = 1.0f;
+	SetAIState(EOBEnemyAIState::Cautious, true);
+	ApplyAIStateSpeed();
+	if (!bBulletPickupFearActive)
+	{
+		FinishBulletPickupReliefReaction();
+		return;
+	}
+
+	GetWorldTimerManager().SetTimer(
+		BulletPickupFearTimerHandle,
+		this,
+		&AOBEnemy::FinishBulletPickupReliefReaction,
+		PendingBulletPickupFearDuration,
+		false);
 }
 
 void AOBEnemy::BeginKickKnockback(const FVector& KnockbackDirection, float Distance, float Duration, float StunDuration)
@@ -489,6 +595,7 @@ void AOBEnemy::BeginKickKnockback(const FVector& KnockbackDirection, float Dista
 	{
 		AI->StopMovement();
 	}
+	GetWorldTimerManager().ClearTimer(StunTimerHandle);
 	GetWorldTimerManager().SetTimer(StunTimerHandle, this, &AOBEnemy::ResumeAfterStun, FMath::Max(StunDuration, ActiveKickKnockbackDuration), false);
 }
 
@@ -625,13 +732,17 @@ void AOBEnemy::RefreshAIStateFromBullet()
 	}
 	else
 	{
+		if (bBulletPickupFearActive)
+		{
+			return;
+		}
 		ScheduleRushTransition();
 	}
 }
 
 void AOBEnemy::ScheduleRushTransition()
 {
-	if (bRushTransitionPending || CurrentAIState == EOBEnemyAIState::Rush || bDead)
+	if (bRushTransitionPending || CurrentAIState == EOBEnemyAIState::Rush || bDead || bBulletPickupFearActive)
 	{
 		return;
 	}
@@ -657,7 +768,7 @@ void AOBEnemy::ScheduleRushTransition()
 void AOBEnemy::CompleteRushTransition()
 {
 	bRushTransitionPending = false;
-	if (!bDead && !IsPlayerHoldingBullet())
+	if (!bDead && !bBulletPickupFearActive && !IsPlayerHoldingBullet())
 	{
 		SetAIState(EOBEnemyAIState::Rush);
 	}
@@ -782,6 +893,12 @@ void AOBEnemy::AssignEnemyRoles()
 				AssignedRole = EOBEnemyRole::BulletBlocker;
 				RoleSlot = BlockerSlot++;
 				RoleCount = BlockerCount;
+			}
+			if (Group[Index]->bBulletPickupFearActive)
+			{
+				AssignedRole = EOBEnemyRole::Flanker;
+				RoleSlot = Index;
+				RoleCount = EnemyCount;
 			}
 			Group[Index]->SetAssignedRole(AssignedRole, RoleSlot, RoleCount);
 		}
@@ -940,11 +1057,15 @@ bool AOBEnemy::UpdateBulletGuardPriority(bool bRefreshMovementOnChange)
 void AOBEnemy::ApplyAIStateSpeed()
 {
 	const float BaseSpeed = EnemyType == EOBEnemyType::Heavy ? HeavySpeed : FastSpeed;
+	const float FearMultiplier = bBulletPickupFearActive
+		? FMath::Clamp(PendingBulletPickupFearSpeedMultiplier, 0.0f, 1.0f)
+		: 1.0f;
 	GetCharacterMovement()->MaxWalkSpeed =
 		BaseSpeed
 		* FMath::Max(CurrentStateSpeedMultiplier, 0.0f)
 		* FMath::Max(DifficultySpeedMultiplier, 0.0f)
-		* FMath::Max(ReliefSpeedMultiplier, 0.0f);
+		* FMath::Max(ReliefSpeedMultiplier, 0.0f)
+		* FearMultiplier;
 }
 
 void AOBEnemy::ResetMovementForStateChange()
@@ -983,6 +1104,15 @@ FVector AOBEnemy::CalculateStateMovementTarget()
 
 FVector AOBEnemy::CalculateChaserTarget() const
 {
+	if (bBulletPickupFearActive && PlayerTarget)
+	{
+		FVector AwayFromPlayer = (GetActorLocation() - PlayerTarget->GetActorLocation()).GetSafeNormal2D();
+		if (AwayFromPlayer.IsNearlyZero())
+		{
+			AwayFromPlayer = -GetActorForwardVector().GetSafeNormal2D();
+		}
+		return PlayerTarget->GetActorLocation() + AwayFromPlayer * (CautiousFlankerMinDistance + BulletPickupFearExtraSafeDistance);
+	}
 	return PlayerTarget ? PlayerTarget->GetActorLocation() : GetActorLocation();
 }
 
@@ -996,12 +1126,20 @@ FVector AOBEnemy::CalculateFlankerTarget(bool bCompressDistance)
 
 	const FVector PlayerLocation = PlayerTarget->GetActorLocation();
 	const float CurrentDistanceToPlayer = FVector::Dist2D(GetActorLocation(), PlayerLocation);
-	const float MinFlankRadius = CurrentAIState == EOBEnemyAIState::Cautious
+	const float SafeDistanceBonus = bBulletPickupFearActive ? BulletPickupFearExtraSafeDistance : 0.0f;
+	const float MinFlankRadius = (CurrentAIState == EOBEnemyAIState::Cautious
 		? CautiousFlankMinRadius
-		: RushFlankMinRadius;
+		: RushFlankMinRadius) + SafeDistanceBonus;
 	if (CurrentDistanceToPlayer <= MinFlankRadius + FlankClosePressureRange)
 	{
-		FVector PressureTarget = PlayerLocation;
+		FVector AwayFromPlayer = (GetActorLocation() - PlayerLocation).GetSafeNormal2D();
+		if (AwayFromPlayer.IsNearlyZero())
+		{
+			AwayFromPlayer = -GetActorForwardVector().GetSafeNormal2D();
+		}
+		FVector PressureTarget = bBulletPickupFearActive
+			? PlayerLocation + AwayFromPlayer * MinFlankRadius
+			: PlayerLocation;
 		ProjectPointToNavigation(PressureTarget);
 		return PressureTarget;
 	}
@@ -1017,8 +1155,8 @@ FVector AOBEnemy::CalculateFlankerTarget(bool bCompressDistance)
 		FlankSideLockRemaining = FMath::FRandRange(FlankSideLockDurationMin, FlankSideLockDurationMax);
 	}
 
-	const float MaxTargetRadius = CurrentDistanceToPlayer + MaxAllowedFlankDistanceIncrease;
-	const float TargetRadius = FMath::Min(CurrentFlankerOffsetDistance, MaxTargetRadius);
+	const float MaxTargetRadius = CurrentDistanceToPlayer + MaxAllowedFlankDistanceIncrease + SafeDistanceBonus;
+	const float TargetRadius = FMath::Min(CurrentFlankerOffsetDistance + SafeDistanceBonus, MaxTargetRadius);
 	const FVector SideDirection = LockedFlankDirection.RotateAngleAxis(90.0f, FVector::UpVector);
 	FVector FallbackTarget = PlayerLocation
 		+ LockedFlankDirection * TargetRadius
@@ -1800,7 +1938,7 @@ float AOBEnemy::GetNextRepathInterval() const
 
 void AOBEnemy::ScheduleNextMoveRequest(float InitialDelay)
 {
-	if (bDead || bSpawnWarningActive || !GetWorld())
+	if (bDead || bSpawnWarningActive || bBulletPickupReactionPaused || !GetWorld())
 	{
 		return;
 	}
@@ -1816,7 +1954,7 @@ void AOBEnemy::ScheduleNextMoveRequest(float InitialDelay)
 
 void AOBEnemy::RequestMove()
 {
-	if (bDead || bSpawnWarningActive)
+	if (bDead || bSpawnWarningActive || bBulletPickupReactionPaused)
 	{
 		return;
 	}
@@ -2066,7 +2204,7 @@ void AOBEnemy::DrawAIRoleTargetDebug() const
 
 void AOBEnemy::TryTouchKill()
 {
-	if (bDead || bSpawnProtected || !PlayerTarget || PlayerTarget->IsDead())
+	if (bDead || bSpawnProtected || bBulletPickupReactionPaused || bKickKnockbackActive || !PlayerTarget || PlayerTarget->IsDead())
 	{
 		return;
 	}
