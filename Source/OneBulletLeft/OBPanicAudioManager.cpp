@@ -19,21 +19,12 @@ AOBPanicAudioManager::AOBPanicAudioManager()
 
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
-
-	HeartbeatComponent = CreateDefaultSubobject<UAudioComponent>(TEXT("Heartbeat"));
-	HeartbeatComponent->SetupAttachment(Root);
-	HeartbeatComponent->bAutoActivate = false;
-	HeartbeatComponent->bAllowSpatialization = false;
-
-	LowDroneComponent = CreateDefaultSubobject<UAudioComponent>(TEXT("LowDrone"));
-	LowDroneComponent->SetupAttachment(Root);
-	LowDroneComponent->bAutoActivate = false;
-	LowDroneComponent->bAllowSpatialization = false;
 }
 
 void AOBPanicAudioManager::BeginPlay()
 {
 	Super::BeginPlay();
+	StartMusicLayer();
 	StartAmbientHorrorLoop();
 }
 
@@ -95,6 +86,7 @@ void AOBPanicAudioManager::StopPanicAudio(AActor* AudioFocus, bool bPlayBulletPi
 	if (World)
 	{
 		World->GetTimerManager().ClearTimer(PanicAudioDelayTimerHandle);
+		World->GetTimerManager().ClearTimer(LowDroneStartTimerHandle);
 		World->GetTimerManager().ClearTimer(RoarStartTimerHandle);
 		World->GetTimerManager().ClearTimer(FootstepsStartTimerHandle);
 	}
@@ -127,13 +119,91 @@ void AOBPanicAudioManager::StopPanicAudio(AActor* AudioFocus, bool bPlayBulletPi
 
 void AOBPanicAudioManager::StartAmbientHorrorLoop()
 {
+	if (!bAmbientHorrorEnabled)
+	{
+		return;
+	}
+
 	ScheduleNextAmbientHorror();
 }
 
-void AOBPanicAudioManager::PlayRandomAmbientHorror()
+void AOBPanicAudioManager::StopAmbientHorrorLoop()
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AmbientHorrorTimerHandle);
+	}
+
+	for (UAudioComponent* Component : ActiveAmbientComponents)
+	{
+		FadeOutAndForget(Component, AmbientFadeOut);
+	}
+	ActiveAmbientComponents.Reset();
+}
+
+void AOBPanicAudioManager::StartPanicSequence(AActor* AudioFocus)
+{
+	StartPanicAudio(AudioFocus);
+}
+
+void AOBPanicAudioManager::StopPanicSequence(AActor* AudioFocus, bool bPlayBulletPickupSound)
+{
+	StopPanicAudio(AudioFocus, bPlayBulletPickupSound);
+}
+
+void AOBPanicAudioManager::PlayRoar()
+{
+	StartCrowdRoarLayer();
+}
+
+void AOBPanicAudioManager::PlayFootsteps()
+{
+	StartCrowdFootstepsLayer();
+}
+
+void AOBPanicAudioManager::StartMusicLayer()
+{
+	if (!bMusicEnabled)
+	{
+		return;
+	}
+
+	if (MusicComponent && MusicComponent->IsPlaying())
+	{
+		return;
+	}
+
+	if (!MusicSound)
+	{
+		DebugMissingSound(TEXT("MusicSound"));
+		return;
+	}
+
+	FadeOutAndForget(MusicComponent, 0.0f);
+	MusicComponent = CreateAudioLayer(MusicSound, MusicVolume, 1.0f, TEXT("MusicSound"));
+	if (MusicComponent)
+	{
+		MusicComponent->FadeIn(FMath::Max(MusicFadeIn, 0.0f), FMath::Max(MusicVolume, 0.0f));
+	}
+}
+
+void AOBPanicAudioManager::StopMusicLayer()
+{
+	if (MusicComponent && MusicComponent->IsPlaying())
+	{
+		MusicComponent->FadeOut(FMath::Max(MusicFadeOut, 0.0f), 0.0f);
+	}
+}
+
+void AOBPanicAudioManager::TryPlayAmbientHorror()
+{
+	if (!bAmbientHorrorEnabled)
+	{
+		return;
+	}
+
 	const float Roll = FMath::FRand();
-	if (Roll > AmbientPlayChance)
+	if (Roll > FMath::Clamp(AmbientPlayChance, 0.0f, 1.0f))
 	{
 		ScheduleNextAmbientHorror();
 		return;
@@ -149,6 +219,11 @@ void AOBPanicAudioManager::PlayRandomAmbientHorror()
 	}
 
 	ScheduleNextAmbientHorror();
+}
+
+void AOBPanicAudioManager::PlayRandomAmbientHorror()
+{
+	TryPlayAmbientHorror();
 }
 
 void AOBPanicAudioManager::ApplyReliefReactionToEnemies(AActor* PlayerActor)
@@ -193,25 +268,28 @@ void AOBPanicAudioManager::StartPanicAudioAfterDelay()
 
 	if (UWorld* World = GetWorld())
 	{
-		World->GetTimerManager().SetTimer(RoarStartTimerHandle, this, &AOBPanicAudioManager::StartCrowdRoarLayer, RoarDelayAfterHeartbeat, false);
-		World->GetTimerManager().SetTimer(FootstepsStartTimerHandle, this, &AOBPanicAudioManager::StartCrowdFootstepsLayer, RoarDelayAfterHeartbeat + FootstepsDelayAfterRoar, false);
+		const float RoarDelay = LowDroneDelayAfterHeartbeat + RoarDelayAfterLowDrone;
+		World->GetTimerManager().SetTimer(LowDroneStartTimerHandle, this, &AOBPanicAudioManager::StartLowDroneLayer, LowDroneDelayAfterHeartbeat, false);
+		World->GetTimerManager().SetTimer(RoarStartTimerHandle, this, &AOBPanicAudioManager::StartCrowdRoarLayer, RoarDelay, false);
+		World->GetTimerManager().SetTimer(FootstepsStartTimerHandle, this, &AOBPanicAudioManager::StartCrowdFootstepsLayer, RoarDelay + FootstepsDelayAfterRoar, false);
 	}
 }
 
 void AOBPanicAudioManager::StartHeartbeatLayer()
 {
 	bHeartbeatLayerActive = true;
-	if (!HeartbeatComponent || !HeartbeatSound)
+	if (!HeartbeatSound)
 	{
 		DebugMissingSound(TEXT("HeartbeatSound"));
 		return;
 	}
 
-	HeartbeatComponent->SetSound(HeartbeatSound);
-	HeartbeatComponent->SetVolumeMultiplier(FMath::Max(HeartbeatVolume, 0.0f));
-	HeartbeatComponent->bAutoActivate = false;
-	HeartbeatComponent->bAllowSpatialization = false;
-	HeartbeatComponent->FadeIn(FMath::Max(HeartbeatFadeIn, 0.0f), FMath::Max(HeartbeatVolume, 0.0f));
+	FadeOutAndForget(HeartbeatComponent, 0.0f);
+	HeartbeatComponent = CreateAudioLayer(HeartbeatSound, HeartbeatVolume, 1.0f, TEXT("HeartbeatSound"));
+	if (HeartbeatComponent)
+	{
+		HeartbeatComponent->FadeIn(FMath::Max(HeartbeatFadeIn, 0.0f), FMath::Max(HeartbeatVolume, 0.0f));
+	}
 }
 
 void AOBPanicAudioManager::StopHeartbeatLayer()
@@ -223,11 +301,27 @@ void AOBPanicAudioManager::StopHeartbeatLayer()
 	}
 }
 
+void AOBPanicAudioManager::StartLowDroneLayer()
+{
+	if (!LowDroneSound)
+	{
+		DebugMissingSound(TEXT("LowDroneSound"));
+		return;
+	}
+
+	FadeOutAndForget(LowDroneComponent, 0.0f);
+	LowDroneComponent = CreateAudioLayer(LowDroneSound, LowDroneVolume, 1.0f, TEXT("LowDroneSound"));
+	if (LowDroneComponent)
+	{
+		LowDroneComponent->FadeIn(FMath::Max(LowDroneFadeIn, 0.0f), FMath::Max(LowDroneVolume, 0.0f));
+	}
+}
+
 void AOBPanicAudioManager::StartCrowdRoarLayer()
 {
 	StopCrowdRoarLayer();
 
-	switch (CrowdRoarMode)
+	switch (RoarMode)
 	{
 	case ECrowdRoarMode::RandomSingle:
 		{
@@ -244,24 +338,24 @@ void AOBPanicAudioManager::StartCrowdRoarLayer()
 			PlayRoarSound(Selected.Get<0>(), Selected.Get<1>(), Selected.Get<2>());
 			break;
 		}
-	case ECrowdRoarMode::LayeredPreset:
-		if (CrowdRoarPreset == ECrowdLayeredRoarPreset::Roar1AndRoar2 || CrowdRoarPreset == ECrowdLayeredRoarPreset::Roar1AndRoar3 || CrowdRoarPreset == ECrowdLayeredRoarPreset::Roar1Roar2Roar3)
+	case ECrowdRoarMode::PresetCombination:
+		if (RoarPreset == ECrowdRoarPreset::Roar1AndRoar2 || RoarPreset == ECrowdRoarPreset::Roar1AndRoar3 || RoarPreset == ECrowdRoarPreset::Roar1AndRoar2AndRoar3)
 		{
 			PlayRoarSound(CrowdRoar1, Roar1Volume, TEXT("CrowdRoar1"));
 		}
-		if (CrowdRoarPreset == ECrowdLayeredRoarPreset::Roar1AndRoar2 || CrowdRoarPreset == ECrowdLayeredRoarPreset::Roar1Roar2Roar3)
+		if (RoarPreset == ECrowdRoarPreset::Roar1AndRoar2 || RoarPreset == ECrowdRoarPreset::Roar2AndRoar3 || RoarPreset == ECrowdRoarPreset::Roar1AndRoar2AndRoar3)
 		{
 			PlayRoarSound(CrowdRoar2, Roar2Volume, TEXT("CrowdRoar2"));
 		}
-		if (CrowdRoarPreset == ECrowdLayeredRoarPreset::Roar1AndRoar3 || CrowdRoarPreset == ECrowdLayeredRoarPreset::Roar1Roar2Roar3)
+		if (RoarPreset == ECrowdRoarPreset::Roar1AndRoar3 || RoarPreset == ECrowdRoarPreset::Roar2AndRoar3 || RoarPreset == ECrowdRoarPreset::Roar1AndRoar2AndRoar3)
 		{
 			PlayRoarSound(CrowdRoar3, Roar3Volume, TEXT("CrowdRoar3"));
 		}
 		break;
 	case ECrowdRoarMode::CustomMix:
-		if (bCustomUseRoar1) { PlayRoarSound(CrowdRoar1, Roar1Volume, TEXT("CrowdRoar1")); }
-		if (bCustomUseRoar2) { PlayRoarSound(CrowdRoar2, Roar2Volume, TEXT("CrowdRoar2")); }
-		if (bCustomUseRoar3) { PlayRoarSound(CrowdRoar3, Roar3Volume, TEXT("CrowdRoar3")); }
+		if (bRoar1Enabled) { PlayRoarSound(CrowdRoar1, Roar1Volume, TEXT("CrowdRoar1")); }
+		if (bRoar2Enabled) { PlayRoarSound(CrowdRoar2, Roar2Volume, TEXT("CrowdRoar2")); }
+		if (bRoar3Enabled) { PlayRoarSound(CrowdRoar3, Roar3Volume, TEXT("CrowdRoar3")); }
 		break;
 	}
 }
@@ -279,7 +373,7 @@ void AOBPanicAudioManager::StartCrowdFootstepsLayer()
 {
 	StopCrowdFootstepsLayer();
 
-	switch (CrowdFootstepMode)
+	switch (FootstepsMode)
 	{
 	case ECrowdFootstepMode::Run1Only:
 		PlayFootstepSound(CrowdFootstepRun1, FootstepRun1Volume, TEXT("CrowdFootstepRun1"));
@@ -290,10 +384,6 @@ void AOBPanicAudioManager::StartCrowdFootstepsLayer()
 	case ECrowdFootstepMode::Run1AndRun2:
 		PlayFootstepSound(CrowdFootstepRun1, FootstepRun1Volume, TEXT("CrowdFootstepRun1"));
 		PlayFootstepSound(CrowdFootstepRun2, FootstepRun2Volume, TEXT("CrowdFootstepRun2"));
-		break;
-	case ECrowdFootstepMode::CustomMix:
-		if (bCustomUseFootstepRun1) { PlayFootstepSound(CrowdFootstepRun1, FootstepRun1Volume, TEXT("CrowdFootstepRun1")); }
-		if (bCustomUseFootstepRun2) { PlayFootstepSound(CrowdFootstepRun2, FootstepRun2Volume, TEXT("CrowdFootstepRun2")); }
 		break;
 	}
 }
@@ -311,16 +401,29 @@ void AOBPanicAudioManager::StopLowDroneLayer()
 {
 	if (LowDroneComponent && LowDroneComponent->IsPlaying())
 	{
-		LowDroneComponent->FadeOut(FMath::Max(PickupReliefFadeOut, 0.0f), 0.0f);
+		const float FadeOut = FMath::Max(LowDroneFadeOut, PickupReliefFadeOut);
+		LowDroneComponent->FadeOut(FadeOut, 0.0f);
 	}
 }
 
 void AOBPanicAudioManager::KeepLoopLayersAlive()
 {
+	if (bMusicEnabled && MusicComponent && MusicSound && !MusicComponent->IsPlaying())
+	{
+		MusicComponent->SetSound(MusicSound);
+		MusicComponent->FadeIn(0.0f, FMath::Max(MusicVolume, 0.0f));
+	}
+
 	if (bHeartbeatLayerActive && HeartbeatComponent && HeartbeatSound && !HeartbeatComponent->IsPlaying())
 	{
 		HeartbeatComponent->SetSound(HeartbeatSound);
 		HeartbeatComponent->FadeIn(0.0f, FMath::Max(HeartbeatVolume, 0.0f));
+	}
+
+	if (bPanicAudioActive && LowDroneComponent && LowDroneSound && !LowDroneComponent->IsPlaying())
+	{
+		LowDroneComponent->SetSound(LowDroneSound);
+		LowDroneComponent->FadeIn(0.0f, FMath::Max(LowDroneVolume, 0.0f));
 	}
 
 	for (UAudioComponent* Component : ActiveFootstepComponents)
@@ -334,10 +437,17 @@ void AOBPanicAudioManager::KeepLoopLayersAlive()
 
 void AOBPanicAudioManager::ScheduleNextAmbientHorror()
 {
+	if (!bAmbientHorrorEnabled)
+	{
+		return;
+	}
+
 	if (UWorld* World = GetWorld())
 	{
-		const float Delay = FMath::FRandRange(AmbientMinInterval, AmbientMaxInterval);
-		World->GetTimerManager().SetTimer(AmbientHorrorTimerHandle, this, &AOBPanicAudioManager::PlayRandomAmbientHorror, Delay, false);
+		const float MinInterval = FMath::Max(MinAmbientInterval, 1.0f);
+		const float MaxInterval = FMath::Max(MaxAmbientInterval, MinInterval);
+		const float Delay = FMath::FRandRange(MinInterval, MaxInterval);
+		World->GetTimerManager().SetTimer(AmbientHorrorTimerHandle, this, &AOBPanicAudioManager::TryPlayAmbientHorror, Delay, false);
 	}
 }
 

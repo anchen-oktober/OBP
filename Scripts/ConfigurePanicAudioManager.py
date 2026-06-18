@@ -64,6 +64,44 @@ def main():
     if shot_sound:
         set_property(defaults, "ShotSound", shot_sound)
 
+    default_values = {
+        "bAmbientHorrorEnabled": True,
+        "MinAmbientInterval": 20.0,
+        "MaxAmbientInterval": 60.0,
+        "AmbientPlayChance": 0.62,
+        "bMusicEnabled": True,
+        "bRoar1Enabled": True,
+        "bRoar2Enabled": True,
+        "bRoar3Enabled": True,
+        "ShotVolume": 1.0,
+        "BulletPickupVolume": 1.0,
+        "HeartbeatVolume": 1.5,
+        "LowDroneVolume": 0.8,
+        "MusicVolume": 0.75,
+        "Roar1Volume": 1.0,
+        "Roar2Volume": 1.0,
+        "Roar3Volume": 1.0,
+        "FootstepRun1Volume": 1.0,
+        "FootstepRun2Volume": 1.0,
+        "WhisperVolume": 0.75,
+        "GhostVolume": 0.75,
+        "HeartbeatFadeIn": 1.0,
+        "HeartbeatFadeOut": 1.0,
+        "LowDroneFadeIn": 1.0,
+        "LowDroneFadeOut": 1.0,
+        "MusicFadeIn": 1.5,
+        "MusicFadeOut": 1.5,
+        "RoarFadeIn": 0.45,
+        "RoarFadeOut": 0.85,
+        "FootstepsFadeIn": 0.8,
+        "FootstepsFadeOut": 1.0,
+        "AmbientFadeIn": 0.5,
+        "AmbientFadeOut": 0.8,
+        "PickupReliefFadeOut": 1.0,
+    }
+    for property_name, value in default_values.items():
+        set_property(defaults, property_name, value)
+
     unreal.EditorAssetLibrary.save_loaded_asset(bp)
     unreal.log("[PanicAudioSetup] Configured BP_PanicAudioManager asset holder fields")
 
