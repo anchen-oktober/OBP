@@ -9,6 +9,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "OBCharacter.h"
+#include "OBEnemySpawnPoint.h"
 #include "OBGameState.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOBWaveManager, Log, All);
@@ -20,15 +21,6 @@ AOBWaveManager::AOBWaveManager()
 	FastEnemyClass = AOBEnemy::StaticClass();
 	HeavyEnemyClass = AOBEnemy::StaticClass();
 
-	SpawnPoints = {
-		FVector(1200.0f, 1200.0f, 120.0f),
-		FVector(-1200.0f, 1200.0f, 120.0f),
-		FVector(1200.0f, -1200.0f, 120.0f),
-		FVector(-1200.0f, -1200.0f, 120.0f),
-		FVector(0.0f, 1450.0f, 120.0f),
-		FVector(0.0f, -1450.0f, 120.0f)
-	};
-
 	WaveDefinitions = {
 		FOBWaveDefinition{2, 0, 1.0f, 0.8f, 2},
 		FOBWaveDefinition{1, 1, 4.0f, 1.0f, 3},
@@ -39,6 +31,8 @@ AOBWaveManager::AOBWaveManager()
 void AOBWaveManager::BeginPlay()
 {
 	Super::BeginPlay();
+
+	RefreshEnemySpawnPoints();
 
 	if (bAutoStartWaves)
 	{
@@ -63,6 +57,7 @@ void AOBWaveManager::StartWaves()
 	GetWorldTimerManager().ClearTimer(SpawnTimerHandle);
 	GetWorldTimerManager().ClearTimer(StateTimerHandle);
 	ClearSpawnedEnemies();
+	RefreshEnemySpawnPoints();
 
 	CurrentWaveNumber = 0;
 	EnemiesRemainingToSpawn = 0;
@@ -310,12 +305,16 @@ void AOBWaveManager::EnterIntermission()
 
 AOBEnemy* AOBWaveManager::SpawnEnemy(EOBEnemyType Type)
 {
-	FVector SpawnLocation = FVector::ZeroVector;
-	if (!TryChooseSpawnLocation(SpawnLocation))
+	AOBEnemySpawnPoint* SpawnPoint = nullptr;
+	if (!TryChooseSpawnPoint(SpawnPoint))
 	{
 		UE_LOG(LogOBWaveManager, Warning, TEXT("WaveManager could not find a valid enemy spawn point."));
 		return nullptr;
 	}
+	check(SpawnPoint);
+
+	const FVector SpawnLocation = SpawnPoint->GetActorLocation();
+	const FRotator SpawnRotation = SpawnPoint->GetActorRotation();
 
 	TSubclassOf<AOBEnemy> ClassToSpawn = Type == EOBEnemyType::Heavy ? HeavyEnemyClass : FastEnemyClass;
 	if (!ClassToSpawn)
@@ -328,7 +327,14 @@ AOBEnemy* AOBWaveManager::SpawnEnemy(EOBEnemyType Type)
 		return nullptr;
 	}
 
-	const FTransform SpawnTransform(FRotator::ZeroRotator, SpawnLocation);
+	UE_LOG(
+		LogOBWaveManager,
+		Log,
+		TEXT("Spawning enemy at SpawnPoint: %s / %s"),
+		*GetNameSafe(SpawnPoint),
+		*SpawnLocation.ToCompactString());
+
+	const FTransform SpawnTransform(SpawnRotation, SpawnLocation);
 	AOBEnemy* Enemy = GetWorld()->SpawnActorDeferred<AOBEnemy>(
 		ClassToSpawn,
 		SpawnTransform,
@@ -374,9 +380,37 @@ AOBEnemy* AOBWaveManager::SpawnEnemy(EOBEnemyType Type)
 	return Enemy;
 }
 
-bool AOBWaveManager::TryChooseSpawnLocation(FVector& OutLocation) const
+void AOBWaveManager::RefreshEnemySpawnPoints()
 {
-	if (SpawnPoints.Num() == 0)
+	EnemySpawnPoints.Reset();
+
+	if (!GetWorld())
+	{
+		return;
+	}
+
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AOBEnemySpawnPoint::StaticClass(), FoundActors);
+	for (AActor* Actor : FoundActors)
+	{
+		if (AOBEnemySpawnPoint* SpawnPoint = Cast<AOBEnemySpawnPoint>(Actor))
+		{
+			EnemySpawnPoints.Add(SpawnPoint);
+		}
+	}
+
+	UE_LOG(LogOBWaveManager, Log, TEXT("Found Enemy Spawn Points: %d"), EnemySpawnPoints.Num());
+	if (EnemySpawnPoints.Num() == 0)
+	{
+		UE_LOG(LogOBWaveManager, Warning, TEXT("No Enemy Spawn Points found on level"));
+	}
+}
+
+bool AOBWaveManager::TryChooseSpawnPoint(AOBEnemySpawnPoint*& OutSpawnPoint) const
+{
+	OutSpawnPoint = nullptr;
+
+	if (EnemySpawnPoints.Num() == 0)
 	{
 		return false;
 	}
@@ -384,8 +418,8 @@ bool AOBWaveManager::TryChooseSpawnLocation(FVector& OutLocation) const
 	const AOBCharacter* Player = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0));
 	if (!Player)
 	{
-		OutLocation = SpawnPoints[FMath::RandRange(0, SpawnPoints.Num() - 1)];
-		return true;
+		OutSpawnPoint = EnemySpawnPoints[FMath::RandRange(0, EnemySpawnPoints.Num() - 1)];
+		return IsValid(OutSpawnPoint);
 	}
 
 	const FVector PlayerLocation = Player->GetActorLocation();
@@ -401,16 +435,28 @@ bool AOBWaveManager::TryChooseSpawnLocation(FVector& OutLocation) const
 	}
 
 	FVector ArenaCenter = FVector::ZeroVector;
-	for (const FVector& SpawnPoint : SpawnPoints)
+	int32 ValidSpawnPointCount = 0;
+	for (const AOBEnemySpawnPoint* SpawnPoint : EnemySpawnPoints)
 	{
-		ArenaCenter += SpawnPoint;
+		if (IsValid(SpawnPoint))
+		{
+			ArenaCenter += SpawnPoint->GetActorLocation();
+			++ValidSpawnPointCount;
+		}
 	}
-	ArenaCenter /= static_cast<float>(SpawnPoints.Num());
+	if (ValidSpawnPointCount <= 0)
+	{
+		return false;
+	}
+	ArenaCenter /= static_cast<float>(ValidSpawnPointCount);
 
 	float MaxArenaRadius = 1.0f;
-	for (const FVector& SpawnPoint : SpawnPoints)
+	for (const AOBEnemySpawnPoint* SpawnPoint : EnemySpawnPoints)
 	{
-		MaxArenaRadius = FMath::Max(MaxArenaRadius, FVector::Dist2D(SpawnPoint, ArenaCenter));
+		if (IsValid(SpawnPoint))
+		{
+			MaxArenaRadius = FMath::Max(MaxArenaRadius, FVector::Dist2D(SpawnPoint->GetActorLocation(), ArenaCenter));
+		}
 	}
 
 	int32 ViewportSizeX = 0;
@@ -427,15 +473,21 @@ bool AOBWaveManager::TryChooseSpawnLocation(FVector& OutLocation) const
 	float BestDistance = 0.0f;
 	const float MinimumDistance = FMath::Clamp(MinimumSpawnDistanceFromPlayer, 800.0f, 1200.0f);
 
-	for (const FVector& SpawnPoint : SpawnPoints)
+	for (AOBEnemySpawnPoint* SpawnPoint : EnemySpawnPoints)
 	{
-		const float DistanceToPlayer = FVector::Dist2D(SpawnPoint, PlayerLocation);
+		if (!IsValid(SpawnPoint))
+		{
+			continue;
+		}
+
+		const FVector SpawnLocation = SpawnPoint->GetActorLocation();
+		const float DistanceToPlayer = FVector::Dist2D(SpawnLocation, PlayerLocation);
 		if (DistanceToPlayer < MinimumDistance)
 		{
 			continue;
 		}
 
-		const FVector WarningLocation = SpawnPoint + FVector::UpVector * 90.0f;
+		const FVector WarningLocation = SpawnLocation + FVector::UpVector * 90.0f;
 		const FVector ToSpawnFromCamera = (WarningLocation - CameraLocation).GetSafeNormal();
 		const float ViewDot = FVector::DotProduct(CameraForward, ToSpawnFromCamera);
 
@@ -458,7 +510,7 @@ bool AOBWaveManager::TryChooseSpawnLocation(FVector& OutLocation) const
 			ECC_Visibility,
 			VisibilityQuery);
 
-		const float EdgeScore = FVector::Dist2D(SpawnPoint, ArenaCenter) / MaxArenaRadius;
+		const float EdgeScore = FVector::Dist2D(SpawnLocation, ArenaCenter) / MaxArenaRadius;
 		float Score = EdgeScore * 200.0f + FMath::Min(DistanceToPlayer / MinimumDistance, 2.0f) * 50.0f;
 		if (bPreferSpawnPointsOutsidePlayerView)
 		{
@@ -476,7 +528,7 @@ bool AOBWaveManager::TryChooseSpawnLocation(FVector& OutLocation) const
 		{
 			bFoundCandidate = true;
 			BestScore = Score;
-			OutLocation = SpawnPoint;
+			OutSpawnPoint = SpawnPoint;
 			bBestOnScreen = bOnScreen;
 			bBestOccluded = bOccluded;
 			BestDistance = DistanceToPlayer;
@@ -488,16 +540,17 @@ bool AOBWaveManager::TryChooseSpawnLocation(FVector& OutLocation) const
 		DebugWaveMessage(
 			FString::Printf(
 				TEXT("Spawn delayed: all %d points are closer than %.0f units to the player."),
-				SpawnPoints.Num(),
+				EnemySpawnPoints.Num(),
 				MinimumDistance),
 			FColor::Orange);
 		return false;
 	}
 
+	const FVector SelectedLocation = OutSpawnPoint->GetActorLocation();
 	DebugWaveMessage(
 		FString::Printf(
 			TEXT("Safe spawn selected at %s: distance=%.0f, on-screen=%s, occluded=%s"),
-			*OutLocation.ToCompactString(),
+			*SelectedLocation.ToCompactString(),
 			BestDistance,
 			bBestOnScreen ? TEXT("yes") : TEXT("no"),
 			bBestOccluded ? TEXT("yes") : TEXT("no")),

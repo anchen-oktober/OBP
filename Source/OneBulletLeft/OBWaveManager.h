@@ -5,6 +5,7 @@
 #include "OBEnemy.h"
 #include "OBWaveManager.generated.h"
 
+class AOBEnemySpawnPoint;
 class UNiagaraSystem;
 
 UENUM(BlueprintType)
@@ -136,8 +137,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="OneBulletSettings|Spawning")
 	TSubclassOf<AOBEnemy> HeavyEnemyClass;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning")
-	TArray<FVector> SpawnPoints;
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="OneBulletSettings|Spawning")
+	TArray<TObjectPtr<AOBEnemySpawnPoint>> EnemySpawnPoints;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="800.0", ClampMax="1200.0", UIMin="800.0", UIMax="1200.0"))
 	float MinimumSpawnDistanceFromPlayer = 1000.0f;
@@ -239,6 +240,9 @@ public:
 	AOBEnemy* SpawnEnemy(EOBEnemyType Type);
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Spawning")
+	void RefreshEnemySpawnPoints();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Spawning")
 	void ClearSpawnedEnemies();
 
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Waves")
@@ -267,7 +271,7 @@ private:
 	void SpawnEnemyTick();
 	void CheckWaveCompletion();
 	void EnterIntermission();
-	bool TryChooseSpawnLocation(FVector& OutLocation) const;
+	bool TryChooseSpawnPoint(AOBEnemySpawnPoint*& OutSpawnPoint) const;
 	void ShowSpawnWarning(EOBEnemyType Type, const FVector& SpawnLocation);
 	void RefreshLivingEnemyCount();
 	FRuntimeWave BuildWave(int32 WaveNumber) const;
