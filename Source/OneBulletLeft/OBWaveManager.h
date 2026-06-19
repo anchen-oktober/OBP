@@ -140,8 +140,11 @@ public:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="OneBulletSettings|Spawning")
 	TArray<TObjectPtr<AOBEnemySpawnPoint>> EnemySpawnPoints;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="800.0", ClampMax="1200.0", UIMin="800.0", UIMax="1200.0"))
-	float MinimumSpawnDistanceFromPlayer = 1000.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="0.0", UIMin="1200.0", UIMax="2000.0", DisplayName="Min Spawn Distance From Player"))
+	float MinimumSpawnDistanceFromPlayer = 1500.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="1", UIMin="10", UIMax="20"))
+	int32 MaxSpawnAttempts = 16;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety")
 	bool bPreferSpawnPointsOutsidePlayerView = true;
@@ -151,6 +154,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="-1.0", ClampMax="1.0"))
 	float DirectViewMinDot = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="0.0", UIMin="0.0", UIMax="300.0"))
+	float SpawnSafeSearchRadius = 240.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="0.0", UIMin="0.0", UIMax="100.0"))
+	float SpawnCollisionPadding = 18.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Warning", meta=(ClampMin="0.3", ClampMax="0.7", UIMin="0.3", UIMax="0.7"))
 	float SpawnWarningDuration = 0.5f;
@@ -262,16 +271,29 @@ private:
 	FTimerHandle SpawnTimerHandle;
 	FTimerHandle StateTimerHandle;
 	TSet<TWeakObjectPtr<AOBEnemy>> SpawnedEnemies;
+	TArray<EOBEnemyType> PendingEnemySpawnTypes;
 	int32 RemainingFastEnemies = 0;
 	int32 RemainingHeavyEnemies = 0;
 	int32 CurrentMaxLiveEnemies = 1;
+
+	struct FEnemySpawnCandidate
+	{
+		TObjectPtr<AOBEnemySpawnPoint> SpawnPoint = nullptr;
+		FVector SpawnLocation = FVector::ZeroVector;
+		float DistanceToPlayer = 0.0f;
+	};
 
 	void SetWaveState(EOBWaveState NewState);
 	void BeginNextWave();
 	void SpawnEnemyTick();
 	void CheckWaveCompletion();
 	void EnterIntermission();
-	bool TryChooseSpawnPoint(AOBEnemySpawnPoint*& OutSpawnPoint) const;
+	bool TryChooseSpawnPoint(EOBEnemyType Type, FEnemySpawnCandidate& OutCandidate);
+	bool TryResolveSpawnPointCandidate(EOBEnemyType Type, AOBEnemySpawnPoint* SpawnPoint, const FVector& PlayerLocation, bool bHasPlayer, bool bAllowTooClose, FEnemySpawnCandidate& OutCandidate, FString& OutFailureReason) const;
+	bool TryResolveSafeSpawnLocation(EOBEnemyType Type, const FVector& MarkerLocation, FVector& OutSpawnLocation, FString& OutFailureReason) const;
+	bool IsSpawnLocationSafe(EOBEnemyType Type, const FVector& NavLocation, FVector& OutSpawnLocation, FString& OutFailureReason) const;
+	bool CanReachPlayerFromSpawn(const FVector& SpawnLocation) const;
+	void GetSpawnCapsule(EOBEnemyType Type, float& OutRadius, float& OutHalfHeight) const;
 	void ShowSpawnWarning(EOBEnemyType Type, const FVector& SpawnLocation);
 	void RefreshLivingEnemyCount();
 	FRuntimeWave BuildWave(int32 WaveNumber) const;

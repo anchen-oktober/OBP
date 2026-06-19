@@ -73,7 +73,7 @@ AOBEnemy::AOBEnemy()
 	HeavyAttackAura->SetHiddenInGame(true);
 
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> HeavyAuraMaterial(
-		TEXT("/Game/OneBullet/Materials/M_HeavyAttackAuraDecal.M_HeavyAttackAuraDecal"));
+		TEXT("/Game/LevelPrototyping/Materials/M_HeavyAttackAuraDecal.M_HeavyAttackAuraDecal"));
 	if (HeavyAuraMaterial.Succeeded())
 	{
 		HeavyAttackAura->SetDecalMaterial(HeavyAuraMaterial.Object);

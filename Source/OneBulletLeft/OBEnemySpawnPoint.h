@@ -4,7 +4,6 @@
 #include "GameFramework/Actor.h"
 #include "OBEnemySpawnPoint.generated.h"
 
-class UArrowComponent;
 class UBillboardComponent;
 class USceneComponent;
 
@@ -21,7 +20,4 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Enemy Spawn Point")
 	TObjectPtr<UBillboardComponent> Billboard;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Enemy Spawn Point")
-	TObjectPtr<UArrowComponent> Arrow;
 };

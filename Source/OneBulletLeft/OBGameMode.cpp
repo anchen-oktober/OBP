@@ -21,6 +21,12 @@ AOBGameMode::AOBGameMode()
 	WaveManagerClass = AOBWaveManager::StaticClass();
 	PanicAudioManagerClass = AOBPanicAudioManager::StaticClass();
 
+	static ConstructorHelpers::FClassFinder<AOBWaveManager> WaveManagerBP(TEXT("/Game/OneBullet/Blueprints/BP_OBWaveManager"));
+	if (WaveManagerBP.Succeeded())
+	{
+		WaveManagerClass = WaveManagerBP.Class;
+	}
+
 	static ConstructorHelpers::FClassFinder<AOBPanicAudioManager> PanicAudioManagerBP(TEXT("/Game/OneBullet/Blueprints/BP_PanicAudioManager"));
 	if (PanicAudioManagerBP.Succeeded())
 	{
@@ -83,9 +89,18 @@ void AOBGameMode::InitializeWaveManager()
 	if (!WaveManager)
 	{
 		TSubclassOf<AOBWaveManager> ClassToSpawn = WaveManagerClass;
-		if (!ClassToSpawn)
+		if (!ClassToSpawn || ClassToSpawn == AOBWaveManager::StaticClass())
 		{
-			ClassToSpawn = AOBWaveManager::StaticClass();
+			if (UClass* WaveManagerBPClass = LoadClass<AOBWaveManager>(
+				nullptr,
+				TEXT("/Game/OneBullet/Blueprints/BP_OBWaveManager.BP_OBWaveManager_C")))
+			{
+				ClassToSpawn = WaveManagerBPClass;
+			}
+			else if (!ClassToSpawn)
+			{
+				ClassToSpawn = AOBWaveManager::StaticClass();
+			}
 		}
 		WaveManager = GetWorld()->SpawnActor<AOBWaveManager>(ClassToSpawn);
 	}
@@ -96,6 +111,7 @@ void AOBGameMode::InitializeWaveManager()
 		return;
 	}
 
+	UE_LOG(LogTemp, Log, TEXT("WaveManager initialized: actor=%s class=%s"), *GetNameSafe(WaveManager), *GetNameSafe(WaveManager->GetClass()));
 }
 
 void AOBGameMode::InitializePanicAudioManager()

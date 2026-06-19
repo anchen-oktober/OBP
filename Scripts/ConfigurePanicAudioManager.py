@@ -64,36 +64,58 @@ def main():
     if shot_sound:
         set_property(defaults, "ShotSound", shot_sound)
 
+    background_music_tracks = []
+    for asset_name, filename in [
+        ("painkiller_01", "painkiller_01.mp3"),
+        ("painkiller_02", "painkiller_02.mp3"),
+    ]:
+        asset = import_sound(asset_name, filename)
+        if asset:
+            background_music_tracks.append(asset)
+
+    set_property(defaults, "BackgroundMusicTracks", background_music_tracks[:5])
+    if background_music_tracks:
+        set_property(defaults, "MusicSound", background_music_tracks[0])
+
     default_values = {
         "bAmbientHorrorEnabled": True,
         "MinAmbientInterval": 20.0,
         "MaxAmbientInterval": 60.0,
         "AmbientPlayChance": 0.62,
         "bMusicEnabled": True,
+        "bRandomizeMusicOnStart": True,
+        "bLoopMusic": True,
+        "bEnableMusicDucking": True,
+        "bAudioBalanceTestMode": False,
+        "bEnableAudioDebugLogs": False,
         "bRoar1Enabled": True,
         "bRoar2Enabled": True,
         "bRoar3Enabled": True,
         "ShotVolume": 1.0,
         "BulletPickupVolume": 1.0,
-        "HeartbeatVolume": 1.5,
-        "LowDroneVolume": 0.8,
-        "MusicVolume": 0.75,
+        "HeartbeatVolume": 1.0,
+        "LowDroneVolume": 0.65,
+        "MusicVolume": 0.25,
+        "NormalMusicVolume": 0.25,
+        "PanicMusicVolume": 0.12,
+        "MusicDuckFadeTime": 0.35,
+        "MusicRestoreFadeTime": 0.75,
         "Roar1Volume": 1.0,
-        "Roar2Volume": 1.0,
-        "Roar3Volume": 1.0,
-        "FootstepRun1Volume": 1.0,
-        "FootstepRun2Volume": 1.0,
-        "WhisperVolume": 0.75,
-        "GhostVolume": 0.75,
-        "HeartbeatFadeIn": 1.0,
+        "Roar2Volume": 0.9,
+        "Roar3Volume": 0.9,
+        "FootstepRun1Volume": 0.85,
+        "FootstepRun2Volume": 0.85,
+        "WhisperVolume": 0.5,
+        "GhostVolume": 0.5,
+        "HeartbeatFadeIn": 0.15,
         "HeartbeatFadeOut": 1.0,
-        "LowDroneFadeIn": 1.0,
+        "LowDroneFadeIn": 0.25,
         "LowDroneFadeOut": 1.0,
-        "MusicFadeIn": 1.5,
+        "MusicFadeIn": 1.0,
         "MusicFadeOut": 1.5,
-        "RoarFadeIn": 0.45,
+        "RoarFadeIn": 0.12,
         "RoarFadeOut": 0.85,
-        "FootstepsFadeIn": 0.8,
+        "FootstepsFadeIn": 0.25,
         "FootstepsFadeOut": 1.0,
         "AmbientFadeIn": 0.5,
         "AmbientFadeOut": 0.8,
