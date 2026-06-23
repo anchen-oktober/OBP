@@ -155,8 +155,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="-1.0", ClampMax="1.0"))
 	float DirectViewMinDot = 0.25f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="0.0", UIMin="0.0", UIMax="300.0"))
-	float SpawnSafeSearchRadius = 240.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="0.0", UIMin="500.0", UIMax="2500.0"))
+	float SpawnSafeSearchRadius = 1800.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Spawning|Safety", meta=(ClampMin="0.0", UIMin="0.0", UIMax="100.0"))
 	float SpawnCollisionPadding = 18.0f;

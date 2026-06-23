@@ -2,7 +2,6 @@
 
 #include "Components/CapsuleComponent.h"
 #include "Components/PointLightComponent.h"
-#include "Engine/Engine.h"
 #include "Engine/PointLight.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -690,6 +689,10 @@ bool AOBWaveManager::TryResolveSafeSpawnLocation(
 	const float SearchRadius = FMath::Max(SpawnSafeSearchRadius, 0.0f);
 	const float Step = FMath::Max(CapsuleRadius * 1.5f, 80.0f);
 	const int32 RingCount = SearchRadius > 0.0f ? FMath::CeilToInt(SearchRadius / Step) : 0;
+	const FVector NavProjectionExtent(
+		FMath::Max(SearchRadius, 500.0f) + CapsuleRadius,
+		FMath::Max(SearchRadius, 500.0f) + CapsuleRadius,
+		FMath::Max(CapsuleHalfHeight * 6.0f, 1500.0f));
 	FString LastFailureReason;
 
 	for (int32 RingIndex = 0; RingIndex <= RingCount; ++RingIndex)
@@ -713,7 +716,7 @@ bool AOBWaveManager::TryResolveSafeSpawnLocation(
 			const bool bProjectedToNav = NavSystem->ProjectPointToNavigation(
 				TestLocation,
 				ProjectedLocation,
-				FVector(SearchRadius + CapsuleRadius, SearchRadius + CapsuleRadius, CapsuleHalfHeight * 2.0f));
+				NavProjectionExtent);
 			if (!bProjectedToNav)
 			{
 				LastFailureReason = TEXT("not on NavMesh");
@@ -722,7 +725,10 @@ bool AOBWaveManager::TryResolveSafeSpawnLocation(
 
 			if (FVector::Dist2D(ProjectedLocation.Location, MarkerLocation) > SearchRadius + KINDA_SMALL_NUMBER)
 			{
-				LastFailureReason = TEXT("nearest NavMesh is too far from marker");
+				LastFailureReason = FString::Printf(
+					TEXT("nearest NavMesh is too far from marker: %.0f > %.0f"),
+					FVector::Dist2D(ProjectedLocation.Location, MarkerLocation),
+					SearchRadius);
 				continue;
 			}
 
@@ -815,8 +821,8 @@ void AOBWaveManager::GetSpawnCapsule(EOBEnemyType Type, float& OutRadius, float&
 {
 	if (Type == EOBEnemyType::Heavy)
 	{
-		OutRadius = 58.0f;
-		OutHalfHeight = 110.0f;
+		OutRadius = 90.0f;
+		OutHalfHeight = 165.0f;
 		return;
 	}
 
@@ -946,15 +952,11 @@ void AOBWaveManager::HandleEnemyDestroyed(AActor* DestroyedActor)
 	CheckWaveCompletion();
 }
 
-void AOBWaveManager::DebugWaveMessage(const FString& Message, const FColor& Color) const
+void AOBWaveManager::DebugWaveMessage(const FString& Message, const FColor& /*Color*/) const
 {
 	if (bEnableWaveDebugLogs)
 	{
 		UE_LOG(LogOBWaveManager, Log, TEXT("%s"), *Message);
-	}
-	if (bEnableWaveDebugScreenMessages && GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, DebugScreenMessageDuration, Color, Message);
 	}
 }
 
