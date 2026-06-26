@@ -192,10 +192,10 @@ public:
 	float GhostVolume = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
-	float HeartbeatFadeIn = 0.15f;
+	float HeartbeatFadeIn = 0.3f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
-	float HeartbeatFadeOut = 1.0f;
+	float HeartbeatFadeOut = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
 	float LowDroneFadeIn = 0.25f;
@@ -204,28 +204,28 @@ public:
 	float LowDroneFadeOut = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ClampMin="0.0", UIMin="0.0", UIMax="5.0", ToolTip="Fade-in time for the selected background music track."))
-	float MusicFadeIn = 1.0f;
+	float MusicFadeIn = 3.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ClampMin="0.0", UIMin="0.0", UIMax="5.0", ToolTip="Fade-out time used when background music is explicitly stopped."))
-	float MusicFadeOut = 1.5f;
+	float MusicFadeOut = 3.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
-	float RoarFadeIn = 0.12f;
+	float RoarFadeIn = 0.8f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
-	float RoarFadeOut = 0.85f;
+	float RoarFadeOut = 1.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
-	float FootstepsFadeIn = 0.25f;
+	float FootstepsFadeIn = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
 	float FootstepsFadeOut = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
-	float AmbientFadeIn = 0.5f;
+	float AmbientFadeIn = 2.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
-	float AmbientFadeOut = 0.8f;
+	float AmbientFadeOut = 2.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
 	float PickupReliefFadeOut = 1.0f;
@@ -339,6 +339,8 @@ protected:
 	TWeakObjectPtr<AActor> PendingAudioFocus;
 	bool bPanicAudioActive = false;
 	bool bHeartbeatLayerActive = false;
+	bool bRoarLayerActive = false;
+	bool bFootstepsLayerActive = false;
 	int32 AudioBalanceTestStep = 0;
 
 	UPROPERTY(Transient)
@@ -376,6 +378,9 @@ protected:
 	void PlayRoarSound(USoundBase* Sound, float Volume, const TCHAR* DebugName);
 	void PlayFootstepSound(USoundBase* Sound, float Volume, const TCHAR* DebugName);
 	UAudioComponent* CreateAudioLayer(USoundBase* Sound, float Volume, float Pitch, const TCHAR* DebugName);
+	UAudioComponent* FindReusableLayerComponent(TArray<TObjectPtr<UAudioComponent>>& Components, USoundBase* Sound) const;
+	bool FadeInExistingLayer(UAudioComponent* Component, USoundBase* Sound, float Volume, float FadeInDuration, const TCHAR* LayerName);
+	void FadeOutReusableLayer(UAudioComponent* Component, float FadeOutDuration) const;
 	void FadeOutAndForget(UAudioComponent* Component, float FadeOutDuration) const;
 	void DebugMissingSound(const TCHAR* SoundName) const;
 };

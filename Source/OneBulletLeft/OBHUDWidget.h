@@ -7,6 +7,7 @@
 #include "OBHUDWidget.generated.h"
 
 class UTextBlock;
+class USlider;
 
 UCLASS(Blueprintable, PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API UOBHUDWidget : public UUserWidget
@@ -54,6 +55,12 @@ public:
 
 	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Text")
 	TObjectPtr<UTextBlock> KillCountText;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Settings")
+	TObjectPtr<USlider> MouseSensitivitySlider;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Settings")
+	TObjectPtr<UTextBlock> MouseSensitivityValueText;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|HUD|Text|Color")
 	FLinearColor BulletReadyTextColor = FLinearColor(0.35f, 1.0f, 0.55f, 1.0f);
@@ -121,8 +128,26 @@ public:
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|HUD")
 	bool IsImmortalMode() const { return bCurrentImmortalMode; }
 
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|HUD|Settings")
+	float GetMouseSensitivity() const;
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|HUD|Settings")
+	float GetMouseSensitivityNormalized() const;
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|HUD|Settings")
+	FText GetMouseSensitivityText() const;
+
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD")
 	void RefreshFromGameState();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD|Settings")
+	void SetMouseSensitivity(float NewSensitivity);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD|Settings")
+	void SetMouseSensitivityNormalized(float NormalizedValue);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD|Settings")
+	void ResetMouseSensitivity();
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD|Waves")
 	void RefreshFromWaveManager();
@@ -148,6 +173,9 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|HUD")
 	void OnImmortalModeChanged(bool bNewImmortalMode);
 
+	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|HUD|Settings")
+	void OnMouseSensitivityChanged(float NewSensitivity, float NewNormalizedValue);
+
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|HUD")
 	void OnHudStateRefreshed(EBulletState NewBulletState, int32 NewKillCount, bool bNewGameOver);
 
@@ -162,6 +190,7 @@ private:
 	float ClearedMessageTimeRemaining = 0.0f;
 	FText PendingWaveMessage = FText::GetEmpty();
 	bool bHasPendingWaveMessage = false;
+	bool bUpdatingMouseSensitivitySlider = false;
 
 	void TryBindWaveManager();
 	void UnbindWaveManager();
@@ -172,6 +201,10 @@ private:
 	void UpdateWaveTextAnimations(float DeltaTime);
 	void UpdateCountdown(float DeltaTime);
 	void ApplyHudTextColors();
+	void RefreshMouseSensitivityControls();
+
+	UFUNCTION()
+	void HandleMouseSensitivitySliderChanged(float NewValue);
 
 	UFUNCTION()
 	void HandleWaveStateChanged(EOBWaveState NewState, EOBWaveState PreviousState);

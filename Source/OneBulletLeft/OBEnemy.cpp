@@ -249,6 +249,8 @@ void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
 	GetWorldTimerManager().ClearTimer(SpawnGraceTimerHandle);
 	GetWorldTimerManager().ClearTimer(ReliefReactionTimerHandle);
 	GetWorldTimerManager().ClearTimer(BulletPickupFearTimerHandle);
+	GetWorldTimerManager().ClearTimer(KickSlowTimerHandle);
+	KickSlowSpeedMultiplier = 1.0f;
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetCharacterMovement()->StopMovementImmediately();
 	GetCharacterMovement()->DisableMovement();
@@ -291,7 +293,13 @@ void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
 	AssignEnemyRoles();
 }
 
-void AOBEnemy::ApplyKick(const FVector& KickDirection)
+void AOBEnemy::ApplyKick(
+	const FVector& KickDirection,
+	float KnockbackDistance,
+	float KnockbackDuration,
+	float StunDuration,
+	float SlowMultiplier,
+	float SlowDuration)
 {
 	if (bDead)
 	{
@@ -300,14 +308,26 @@ void AOBEnemy::ApplyKick(const FVector& KickDirection)
 
 	const FVector LaunchDirection = KickDirection.GetSafeNormal2D();
 	OnEnemyKicked(LaunchDirection, EnemyType);
-	if (EnemyType == EOBEnemyType::Fast)
+	const float TypeResistance = EnemyType == EOBEnemyType::Heavy ? 0.72f : 1.0f;
+
+	KickSlowSpeedMultiplier = FMath::Clamp(SlowMultiplier, 0.0f, 1.0f);
+	ApplyAIStateSpeed();
+	if (GetWorld())
 	{
-		BeginKickKnockback(LaunchDirection, 560.0f, 0.26f, 0.35f);
+		GetWorldTimerManager().ClearTimer(KickSlowTimerHandle);
+		GetWorldTimerManager().SetTimer(
+			KickSlowTimerHandle,
+			this,
+			&AOBEnemy::ResetKickSlow,
+			FMath::Max(SlowDuration, 0.01f),
+			false);
 	}
-	else
-	{
-		BeginKickKnockback(LaunchDirection, 360.0f, 0.30f, 1.0f);
-	}
+
+	BeginKickKnockback(
+		LaunchDirection,
+		FMath::Max(KnockbackDistance, 0.0f) * TypeResistance,
+		FMath::Max(KnockbackDuration, 0.01f),
+		FMath::Max(StunDuration, KnockbackDuration));
 }
 
 void AOBEnemy::ApplyBulletPickupReliefReaction(
@@ -480,6 +500,7 @@ void AOBEnemy::Disappear()
 	GetWorldTimerManager().ClearTimer(SpawnGraceTimerHandle);
 	GetWorldTimerManager().ClearTimer(ReliefReactionTimerHandle);
 	GetWorldTimerManager().ClearTimer(BulletPickupFearTimerHandle);
+	GetWorldTimerManager().ClearTimer(KickSlowTimerHandle);
 	OnEnemyDisappearing(EnemyType, GetActorLocation());
 	Destroy();
 }
@@ -488,6 +509,12 @@ void AOBEnemy::ResumeAfterStun()
 {
 	bStunned = false;
 	RequestMove();
+}
+
+void AOBEnemy::ResetKickSlow()
+{
+	KickSlowSpeedMultiplier = 1.0f;
+	ApplyAIStateSpeed();
 }
 
 void AOBEnemy::FinishBulletPickupReliefReaction()
@@ -1065,6 +1092,7 @@ void AOBEnemy::ApplyAIStateSpeed()
 		* FMath::Max(CurrentStateSpeedMultiplier, 0.0f)
 		* FMath::Max(DifficultySpeedMultiplier, 0.0f)
 		* FMath::Max(ReliefSpeedMultiplier, 0.0f)
+		* FMath::Max(KickSlowSpeedMultiplier, 0.0f)
 		* FearMultiplier;
 }
 

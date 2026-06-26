@@ -1,5 +1,6 @@
 #include "OBHUDWidget.h"
 
+#include "Components/Slider.h"
 #include "Components/TextBlock.h"
 #include "Kismet/GameplayStatics.h"
 #include "OBCharacter.h"
@@ -24,10 +25,21 @@ void UOBHUDWidget::NativeConstruct()
 
 	TryBindWaveManager();
 	RefreshFromWaveManager();
+	if (MouseSensitivitySlider)
+	{
+		MouseSensitivitySlider->SetMinValue(0.0f);
+		MouseSensitivitySlider->SetMaxValue(1.0f);
+		MouseSensitivitySlider->OnValueChanged.AddUniqueDynamic(this, &UOBHUDWidget::HandleMouseSensitivitySliderChanged);
+	}
+	RefreshMouseSensitivityControls();
 }
 
 void UOBHUDWidget::NativeDestruct()
 {
+	if (MouseSensitivitySlider)
+	{
+		MouseSensitivitySlider->OnValueChanged.RemoveDynamic(this, &UOBHUDWidget::HandleMouseSensitivitySliderChanged);
+	}
 	UnbindWaveManager();
 	Super::NativeDestruct();
 }
@@ -39,6 +51,7 @@ void UOBHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	RefreshFromWaveManager();
 	UpdateCountdown(InDeltaTime);
 	UpdateWaveTextAnimations(InDeltaTime);
+	RefreshMouseSensitivityControls();
 }
 
 void UOBHUDWidget::RefreshFromGameState()
@@ -123,6 +136,92 @@ void UOBHUDWidget::ApplyHudTextColors()
 	{
 		KillCountText->SetColorAndOpacity(KillCountTextColor);
 	}
+}
+
+float UOBHUDWidget::GetMouseSensitivity() const
+{
+	if (const AOBCharacter* Player = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0)))
+	{
+		return Player->GetMouseSensitivity();
+	}
+
+	return 1.0f;
+}
+
+float UOBHUDWidget::GetMouseSensitivityNormalized() const
+{
+	if (const AOBCharacter* Player = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0)))
+	{
+		return Player->GetMouseSensitivityNormalized();
+	}
+
+	return 0.0f;
+}
+
+FText UOBHUDWidget::GetMouseSensitivityText() const
+{
+	FNumberFormattingOptions FormatOptions;
+	FormatOptions.SetMinimumFractionalDigits(2);
+	FormatOptions.SetMaximumFractionalDigits(2);
+	return FText::Format(
+		NSLOCTEXT("OneBulletSettingsUI", "MouseSensitivityValue", "{0}x"),
+		FText::AsNumber(GetMouseSensitivity(), &FormatOptions));
+}
+
+void UOBHUDWidget::SetMouseSensitivity(float NewSensitivity)
+{
+	if (AOBCharacter* Player = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0)))
+	{
+		Player->SetMouseSensitivity(NewSensitivity);
+		RefreshMouseSensitivityControls();
+		OnMouseSensitivityChanged(Player->GetMouseSensitivity(), Player->GetMouseSensitivityNormalized());
+	}
+}
+
+void UOBHUDWidget::SetMouseSensitivityNormalized(float NormalizedValue)
+{
+	if (AOBCharacter* Player = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0)))
+	{
+		Player->SetMouseSensitivityNormalized(NormalizedValue);
+		RefreshMouseSensitivityControls();
+		OnMouseSensitivityChanged(Player->GetMouseSensitivity(), Player->GetMouseSensitivityNormalized());
+	}
+}
+
+void UOBHUDWidget::ResetMouseSensitivity()
+{
+	if (AOBCharacter* Player = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0)))
+	{
+		Player->ResetMouseSensitivity();
+		RefreshMouseSensitivityControls();
+		OnMouseSensitivityChanged(Player->GetMouseSensitivity(), Player->GetMouseSensitivityNormalized());
+	}
+}
+
+void UOBHUDWidget::RefreshMouseSensitivityControls()
+{
+	const float NormalizedSensitivity = GetMouseSensitivityNormalized();
+	if (MouseSensitivitySlider && !bUpdatingMouseSensitivitySlider && !FMath::IsNearlyEqual(MouseSensitivitySlider->GetValue(), NormalizedSensitivity, 0.001f))
+	{
+		bUpdatingMouseSensitivitySlider = true;
+		MouseSensitivitySlider->SetValue(NormalizedSensitivity);
+		bUpdatingMouseSensitivitySlider = false;
+	}
+
+	if (MouseSensitivityValueText)
+	{
+		MouseSensitivityValueText->SetText(GetMouseSensitivityText());
+	}
+}
+
+void UOBHUDWidget::HandleMouseSensitivitySliderChanged(float NewValue)
+{
+	if (bUpdatingMouseSensitivitySlider)
+	{
+		return;
+	}
+
+	SetMouseSensitivityNormalized(NewValue);
 }
 
 void UOBHUDWidget::RefreshFromWaveManager()

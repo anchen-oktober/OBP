@@ -14,13 +14,20 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/ConfigCacheIni.h"
 #include "Particles/ParticleSystem.h"
 #include "OBEnemy.h"
 #include "OBGameMode.h"
 #include "OBGameState.h"
+#include "OBHUD.h"
 
 namespace
 {
+constexpr float DefaultMouseSensitivity = 1.0f;
+constexpr float MouseSensitivityDisplayPrecision = 100.0f;
+const TCHAR* MouseSettingsSection = TEXT("OneBulletLeft.Controls");
+const TCHAR* MouseSensitivityKey = TEXT("MouseSensitivity");
+
 bool IsAnimationCompatibleWithMesh(const UAnimationAsset* Animation, const USkeletalMeshComponent* MeshComponent)
 {
 	const USkeletalMesh* SkeletalMesh = MeshComponent ? MeshComponent->GetSkeletalMeshAsset() : nullptr;
@@ -107,7 +114,16 @@ void AOBCharacter::OnConstruction(const FTransform& Transform)
 void AOBCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	LoadMouseSensitivity();
 
+	if (FirstPersonCamera)
+	{
+		DefaultFirstPersonFOV = FirstPersonCamera->FieldOfView;
+	}
+	if (ThirdPersonCamera)
+	{
+		DefaultThirdPersonFOV = ThirdPersonCamera->FieldOfView;
+	}
 	if (GetMesh())
 	{
 		DefaultPlayerAnimClass = GetMesh()->GetAnimClass();
@@ -132,6 +148,7 @@ void AOBCharacter::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	UpdateDodge(DeltaSeconds);
 	UpdateRecoil(DeltaSeconds);
+	UpdateKickFOVPunch(DeltaSeconds);
 	UpdateSimpleLocomotionAnimation();
 	UpdateWeaponPose(DeltaSeconds);
 }
@@ -161,6 +178,8 @@ void AOBCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	PlayerInputComponent->BindKey(EKeys::One, IE_Pressed, this, &AOBCharacter::ToggleViewMode);
 	PlayerInputComponent->BindKey(EKeys::Two, IE_Pressed, this, &AOBCharacter::ToggleImmortalMode);
 	PlayerInputComponent->BindKey(EKeys::Three, IE_Pressed, this, &AOBCharacter::ToggleEnemyDetectionRadiusVisualization);
+	PlayerInputComponent->BindKey(EKeys::LeftBracket, IE_Pressed, this, &AOBCharacter::DecreaseMouseSensitivity);
+	PlayerInputComponent->BindKey(EKeys::RightBracket, IE_Pressed, this, &AOBCharacter::IncreaseMouseSensitivity);
 }
 
 void AOBCharacter::MoveForward(float Value)
@@ -187,7 +206,7 @@ void AOBCharacter::LookYaw(float Value)
 {
 	if (!bDead)
 	{
-		AddControllerYawInput(Value);
+		AddControllerYawInput(Value * MouseSensitivity);
 	}
 }
 
@@ -195,13 +214,71 @@ void AOBCharacter::LookPitch(float Value)
 {
 	if (!bDead)
 	{
-		AddControllerPitchInput(Value);
+		AddControllerPitchInput(Value * MouseSensitivity);
 	}
+}
+
+void AOBCharacter::SetMouseSensitivity(float NewSensitivity)
+{
+	const float ClampedSensitivity = GetClampedMouseSensitivity(NewSensitivity);
+	if (FMath::IsNearlyEqual(MouseSensitivity, ClampedSensitivity, 0.001f))
+	{
+		return;
+	}
+
+	MouseSensitivity = ClampedSensitivity;
+	SaveMouseSensitivity();
+	if (const APlayerController* PlayerController = Cast<APlayerController>(Controller))
+	{
+		if (AOBHUD* OneBulletHUD = Cast<AOBHUD>(PlayerController->GetHUD()))
+		{
+			OneBulletHUD->ShowMouseSensitivityChanged(MouseSensitivity);
+		}
+	}
+}
+
+void AOBCharacter::SetMouseSensitivityNormalized(float NormalizedValue)
+{
+	const float MinSensitivity = FMath::Max(MinMouseSensitivity, 0.01f);
+	const float MaxSensitivity = FMath::Max(MaxMouseSensitivity, MinSensitivity);
+	SetMouseSensitivity(FMath::Lerp(MinSensitivity, MaxSensitivity, FMath::Clamp(NormalizedValue, 0.0f, 1.0f)));
+}
+
+void AOBCharacter::AdjustMouseSensitivity(float Delta)
+{
+	SetMouseSensitivity(MouseSensitivity + Delta);
+}
+
+void AOBCharacter::ResetMouseSensitivity()
+{
+	SetMouseSensitivity(DefaultMouseSensitivity);
+}
+
+float AOBCharacter::GetMouseSensitivityNormalized() const
+{
+	const float MinSensitivity = FMath::Max(MinMouseSensitivity, 0.01f);
+	const float MaxSensitivity = FMath::Max(MaxMouseSensitivity, MinSensitivity);
+	if (FMath::IsNearlyEqual(MinSensitivity, MaxSensitivity))
+	{
+		return 1.0f;
+	}
+
+	return FMath::Clamp((MouseSensitivity - MinSensitivity) / (MaxSensitivity - MinSensitivity), 0.0f, 1.0f);
+}
+
+void AOBCharacter::IncreaseMouseSensitivity()
+{
+	AdjustMouseSensitivity(FMath::Max(MouseSensitivityStep, 0.01f));
+}
+
+void AOBCharacter::DecreaseMouseSensitivity()
+{
+	AdjustMouseSensitivity(-FMath::Max(MouseSensitivityStep, 0.01f));
 }
 
 void AOBCharacter::Shoot()
 {
-	if (bDead)
+	if (bDead || bKickRecovering)
 	{
 		return;
 	}
@@ -285,66 +362,85 @@ void AOBCharacter::Shoot()
 
 void AOBCharacter::Kick()
 {
-	if (bDead || !bKickReady)
+	if (bDead || !bKickReady || bKickRecovering)
 	{
 		return;
 	}
 
 	bKickReady = false;
+	bKickRecovering = true;
 	GetWorldTimerManager().SetTimer(KickCooldownTimerHandle, this, &AOBCharacter::ResetKick, KickCooldown, false);
+	GetWorldTimerManager().SetTimer(KickRecoveryTimerHandle, this, &AOBCharacter::FinishKickRecovery, KickRecoveryDuration, false);
 	PlayActionAnimation(KickAnimation, KickAnimationDuration);
-	if (KickSound)
-	{
-		UGameplayStatics::PlaySoundAtLocation(this, KickSound, GetActorLocation());
-	}
 
-	const FVector Start = FirstPersonCamera->GetComponentLocation();
-	const FVector End = Start + FirstPersonCamera->GetForwardVector() * KickRange;
-	TArray<FHitResult> Hits;
-	FCollisionShape Sphere = FCollisionShape::MakeSphere(KickRadius);
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(OneBulletKick), false, this);
-	GetWorld()->SweepMultiByChannel(Hits, Start, End, FQuat::Identity, ECC_Pawn, Sphere, Params);
+	const UCameraComponent* ShoveCamera = GetShootingCamera();
+	FVector PushForward = ShoveCamera ? ShoveCamera->GetForwardVector().GetSafeNormal2D() : GetActorForwardVector().GetSafeNormal2D();
+	if (PushForward.IsNearlyZero())
+	{
+		PushForward = GetActorForwardVector().GetSafeNormal2D();
+	}
+	const FVector Start = GetActorLocation() + FVector::UpVector * 45.0f;
+	const FVector End = Start + PushForward * KickRange;
+	const float HalfConeRadians = FMath::DegreesToRadians(FMath::Clamp(KickConeAngleDegrees, 1.0f, 180.0f) * 0.5f);
+	const float ConeDotThreshold = FMath::Cos(HalfConeRadians);
 
 	TArray<AOBEnemy*> HitEnemies;
-	for (const FHitResult& Hit : Hits)
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(OneBulletKick), false, this);
+	const FCollisionShape Sphere = FCollisionShape::MakeSphere(KickRadius);
+	constexpr float TraceYawOffsets[] = {0.0f, -24.0f, 24.0f};
+
+	for (const float YawOffset : TraceYawOffsets)
 	{
-		if (AOBEnemy* Enemy = Cast<AOBEnemy>(Hit.GetActor()))
+		TArray<FHitResult> Hits;
+		const FVector TraceDirection = PushForward.RotateAngleAxis(YawOffset, FVector::UpVector).GetSafeNormal2D();
+		GetWorld()->SweepMultiByChannel(Hits, Start, Start + TraceDirection * KickRange, FQuat::Identity, ECC_Pawn, Sphere, Params);
+		for (const FHitResult& Hit : Hits)
 		{
-			HitEnemies.AddUnique(Enemy);
+			AOBEnemy* Enemy = Cast<AOBEnemy>(Hit.GetActor());
+			if (!Enemy || Enemy->IsDead())
+			{
+				continue;
+			}
+
+			const FVector ToEnemy = (Enemy->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+			if (ToEnemy.IsNearlyZero() || FVector::DotProduct(PushForward, ToEnemy) >= ConeDotThreshold)
+			{
+				HitEnemies.AddUnique(Enemy);
+			}
 		}
+	}
+
+	for (AOBEnemy* Enemy : HitEnemies)
+	{
+		if (!Enemy)
+		{
+			continue;
+		}
+
+		const FVector AwayFromPlayer = (Enemy->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+		Enemy->ApplyKick(
+			AwayFromPlayer.IsNearlyZero() ? PushForward : AwayFromPlayer,
+			KickPushDistance,
+			KickPushDuration,
+			KickStunDuration,
+			KickSlowMultiplier,
+			KickSlowDuration);
+	}
+
+	if (KickPlayerLungeDistance > KINDA_SMALL_NUMBER && !PushForward.IsNearlyZero())
+	{
+		FHitResult LungeHit;
+		AddActorWorldOffset(PushForward * KickPlayerLungeDistance, true, &LungeHit);
 	}
 
 	const int32 HitEnemyCount = HitEnemies.Num();
-	if (HitEnemyCount == 1)
-	{
-		const FVector AwayFromPlayer = (HitEnemies[0]->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
-		HitEnemies[0]->ApplyKick(AwayFromPlayer.IsNearlyZero() ? FirstPersonCamera->GetForwardVector() : AwayFromPlayer);
-	}
-	else if (HitEnemyCount > 1)
-	{
-		HitEnemies.Sort([this](const AOBEnemy& Left, const AOBEnemy& Right)
-		{
-			const FVector ToLeft = (Left.GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
-			const FVector ToRight = (Right.GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
-			return FVector::DotProduct(GetActorRightVector(), ToLeft) < FVector::DotProduct(GetActorRightVector(), ToRight);
-		});
-
-		const float SpreadDegrees = 70.0f;
-		const float Step = HitEnemyCount > 1 ? SpreadDegrees / static_cast<float>(HitEnemyCount - 1) : 0.0f;
-		for (int32 Index = 0; Index < HitEnemyCount; ++Index)
-		{
-			const float YawOffset = -SpreadDegrees * 0.5f + Step * static_cast<float>(Index);
-			const FVector SpreadDirection = FirstPersonCamera->GetForwardVector().RotateAngleAxis(YawOffset, FVector::UpVector).GetSafeNormal2D();
-			HitEnemies[Index]->ApplyKick(SpreadDirection);
-		}
-	}
-
+	PlayKickFeedback(GetActorLocation(), PushForward, HitEnemyCount);
 	OnPlayerKick(Start, End, HitEnemyCount);
 }
 
 void AOBCharacter::Dodge()
 {
-	if (bDead)
+	if (bDead || bKickRecovering)
 	{
 		return;
 	}
@@ -438,6 +534,9 @@ void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& 
 	bKickReady = true;
 	bDodgeReady = true;
 	bDodging = false;
+	bKickRecovering = false;
+	bKickFOVPunchActive = false;
+	bKickFOVReturning = false;
 	ActiveDodgeDirection = FVector::ZeroVector;
 	ActiveDodgeElapsed = 0.0f;
 	ActiveDodgePreviousAlpha = 0.0f;
@@ -449,6 +548,7 @@ void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& 
 	}
 
 	GetWorldTimerManager().ClearTimer(KickCooldownTimerHandle);
+	GetWorldTimerManager().ClearTimer(KickRecoveryTimerHandle);
 	GetWorldTimerManager().ClearTimer(DodgeCooldownTimerHandle);
 	GetWorldTimerManager().ClearTimer(ActionAnimationTimerHandle);
 	RestoreMovementAnimation();
@@ -507,6 +607,11 @@ void AOBCharacter::ResetKick()
 	bKickReady = true;
 }
 
+void AOBCharacter::FinishKickRecovery()
+{
+	bKickRecovering = false;
+}
+
 void AOBCharacter::ResetDodge()
 {
 	bDodgeReady = true;
@@ -522,6 +627,86 @@ void AOBCharacter::UpdateRecoil(float DeltaSeconds)
 	const float Recovery = FMath::Min(RemainingRecoilPitch, RecoilRecoverySpeed * DeltaSeconds);
 	AddControllerPitchInput(Recovery);
 	RemainingRecoilPitch -= Recovery;
+}
+
+void AOBCharacter::UpdateKickFOVPunch(float DeltaSeconds)
+{
+	if (!bKickFOVPunchActive && !bKickFOVReturning)
+	{
+		return;
+	}
+
+	KickFOVElapsed += DeltaSeconds;
+	const bool bPunchingIn = bKickFOVPunchActive;
+	const float Duration = FMath::Max(bPunchingIn ? KickFOVPunchInDuration : KickFOVPunchOutDuration, 0.01f);
+	const float Alpha = FMath::Clamp(KickFOVElapsed / Duration, 0.0f, 1.0f);
+	const float StartOffset = bPunchingIn ? 0.0f : KickFOVPunchAmount;
+	const float TargetOffset = bPunchingIn ? KickFOVPunchAmount : 0.0f;
+	const float CurrentOffset = FMath::Lerp(StartOffset, TargetOffset, Alpha);
+
+	if (FirstPersonCamera)
+	{
+		FirstPersonCamera->SetFieldOfView(DefaultFirstPersonFOV + CurrentOffset);
+	}
+	if (ThirdPersonCamera)
+	{
+		ThirdPersonCamera->SetFieldOfView(DefaultThirdPersonFOV + CurrentOffset);
+	}
+
+	if (Alpha < 1.0f)
+	{
+		return;
+	}
+
+	KickFOVElapsed = 0.0f;
+	if (bKickFOVPunchActive)
+	{
+		bKickFOVPunchActive = false;
+		bKickFOVReturning = true;
+	}
+	else
+	{
+		bKickFOVReturning = false;
+	}
+}
+
+void AOBCharacter::StartKickFOVPunch()
+{
+	if (KickFOVPunchAmount <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	KickFOVElapsed = 0.0f;
+	bKickFOVPunchActive = true;
+	bKickFOVReturning = false;
+}
+
+void AOBCharacter::PlayKickFeedback(const FVector& Origin, const FVector& Direction, int32 HitEnemyCount)
+{
+	if (KickSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, KickSound, Origin);
+	}
+	if (KickPushEffect)
+	{
+		const FVector EffectLocation = Origin + Direction.GetSafeNormal2D() * 60.0f;
+		UGameplayStatics::SpawnEmitterAtLocation(
+			GetWorld(),
+			KickPushEffect,
+			FTransform(Direction.Rotation(), EffectLocation),
+			true,
+			EPSCPoolMethod::AutoRelease);
+	}
+	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
+	{
+		if (KickCameraShake && PlayerController->PlayerCameraManager)
+		{
+			PlayerController->PlayerCameraManager->StartCameraShake(KickCameraShake);
+		}
+	}
+
+	StartKickFOVPunch();
 }
 
 void AOBCharacter::ApplyFeelStop(float Duration)
@@ -1113,6 +1298,36 @@ void AOBCharacter::ApplyViewMode()
 	{
 		HideFirstPersonHead();
 	}
+}
+
+void AOBCharacter::LoadMouseSensitivity()
+{
+	float SavedSensitivity = MouseSensitivity;
+	if (GConfig)
+	{
+		GConfig->GetFloat(MouseSettingsSection, MouseSensitivityKey, SavedSensitivity, GGameUserSettingsIni);
+	}
+
+	MouseSensitivity = GetClampedMouseSensitivity(SavedSensitivity);
+}
+
+void AOBCharacter::SaveMouseSensitivity() const
+{
+	if (!GConfig)
+	{
+		return;
+	}
+
+	GConfig->SetFloat(MouseSettingsSection, MouseSensitivityKey, MouseSensitivity, GGameUserSettingsIni);
+	GConfig->Flush(false, GGameUserSettingsIni);
+}
+
+float AOBCharacter::GetClampedMouseSensitivity(float Value) const
+{
+	const float MinSensitivity = FMath::Max(MinMouseSensitivity, 0.01f);
+	const float MaxSensitivity = FMath::Max(MaxMouseSensitivity, MinSensitivity);
+	const float RoundedValue = FMath::RoundToFloat(Value * MouseSensitivityDisplayPrecision) / MouseSensitivityDisplayPrecision;
+	return FMath::Clamp(RoundedValue, MinSensitivity, MaxSensitivity);
 }
 
 UCameraComponent* AOBCharacter::GetShootingCamera() const

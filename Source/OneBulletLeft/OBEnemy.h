@@ -413,7 +413,13 @@ public:
 	FOBEnemyDeathReportedSignature OnDeathReported;
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
-	void ApplyKick(const FVector& KickDirection);
+	void ApplyKick(
+		const FVector& KickDirection,
+		float KnockbackDistance = 720.0f,
+		float KnockbackDuration = 0.22f,
+		float StunDuration = 0.45f,
+		float SlowMultiplier = 0.60f,
+		float SlowDuration = 0.75f);
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Relief")
 	void ApplyBulletPickupReliefReaction(
@@ -506,6 +512,7 @@ protected:
 	float CurrentStateSpeedMultiplier = 1.0f;
 	float DifficultySpeedMultiplier = 1.0f;
 	float ReliefSpeedMultiplier = 1.0f;
+	float KickSlowSpeedMultiplier = 1.0f;
 	float BulletPickupFearExtraSafeDistance = 0.0f;
 	float PendingBulletPickupFearDuration = 0.0f;
 	float PendingBulletPickupFearSpeedMultiplier = 1.0f;
@@ -542,8 +549,10 @@ protected:
 	FTimerHandle SpawnGraceTimerHandle;
 	FTimerHandle ReliefReactionTimerHandle;
 	FTimerHandle BulletPickupFearTimerHandle;
+	FTimerHandle KickSlowTimerHandle;
 
 	void ResumeAfterStun();
+	void ResetKickSlow();
 	void StartBulletPickupRetreatReaction();
 	void StartBulletPickupFearState();
 	void FinishBulletPickupReliefReaction();
