@@ -163,13 +163,13 @@ public:
 	float LowDroneVolume = 0.65f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ClampMin="0.0", UIMin="0.0", UIMax="1.0", ToolTip="Background music volume during normal play. The playlist keeps playing through panic and pickup states."))
-	float MusicVolume = 1.0f;
+	float MusicVolume = 0.65f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ToolTip="Slightly duck background music during panic so heartbeat, crowd, footsteps, and low drone stay in front without stopping the playlist."))
 	bool bEnableMusicDucking = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ClampMin="0.0", UIMin="0.0", UIMax="1.0", ToolTip="Background music volume while panic state is active. The track keeps playing and only its volume changes."))
-	float PanicMusicVolume = 0.7f;
+	float PanicMusicVolume = 0.38f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ClampMin="0.0", UIMin="0.0", UIMax="2.0", ToolTip="Fade time for ducking music down when panic starts."))
 	float MusicDuckFadeTime = 0.35f;
