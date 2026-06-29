@@ -6,6 +6,7 @@
 
 class USceneComponent;
 class USoundBase;
+class USoundClass;
 class UAudioComponent;
 
 UENUM(BlueprintType)
@@ -59,6 +60,9 @@ public:
 	UPROPERTY(Transient)
 	TObjectPtr<USoundBase> SelectedMusicSound;
 
+	UPROPERTY(Transient)
+	TObjectPtr<USoundBase> LastSelectedMusicSound;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Audio Assets")
 	TObjectPtr<USoundBase> ShotSound;
 
@@ -86,11 +90,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Audio Assets")
 	TObjectPtr<USoundBase> LowDroneSound;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Audio Assets")
-	TObjectPtr<USoundBase> MusicSound;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", DisplayName="Background Music Tracks", ToolTip="List of background music tracks. Add up to 5 SoundWave or SoundCue assets. One track will be selected randomly on BeginPlay. Place BP_PanicAudioManager in the level, select it, then use Details -> Panic Audio | Music to add tracks."))
-	TArray<TObjectPtr<USoundBase>> BackgroundMusicTracks;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ToolTip="Add background music tracks here. One track will be selected randomly at runtime."))
+	TArray<TObjectPtr<USoundBase>> BackgroundMusicPlaylist;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Audio Assets")
 	TObjectPtr<USoundBase> WhisperAmbientSound;
@@ -113,11 +114,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ToolTip="Enable or disable the persistent background music layer."))
 	bool bMusicEnabled = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ToolTip="If enabled, one of the first 5 BackgroundMusicTracks is selected randomly on BeginPlay. If disabled, the first valid track is used."))
-	bool bRandomizeMusicOnStart = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ToolTip="If enabled, one track from BackgroundMusicPlaylist is selected randomly on BeginPlay. If disabled, the first valid track is used."))
+	bool bRandomizeMusic = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ToolTip="Keep restarting the selected background track when it ends. Prefer looping SoundWave or SoundCue assets for seamless loops."))
-	bool bLoopMusic = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ToolTip="When selecting music again during the same runtime, avoid choosing the same track twice in a row when another valid track exists."))
+	bool bAvoidRepeatSameTrack = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Sound Classes", meta=(ExposeOnSpawn="false", ToolTip="Optional Sound Class override for the persistent background music playlist. Leave empty to use the track asset's Sound Class."))
+	TObjectPtr<USoundClass> MusicSoundClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Sound Classes", meta=(ExposeOnSpawn="false", ToolTip="Optional Sound Class override for heartbeat, crowd roar, footsteps, and low drone panic layers. Leave empty to use each asset's Sound Class."))
+	TObjectPtr<USoundClass> PanicSFXSoundClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Sound Classes", meta=(ExposeOnSpawn="false", ToolTip="Optional Sound Class override for shot, pickup, and other short one-shot game sounds. Leave empty to use each asset's Sound Class."))
+	TObjectPtr<USoundClass> SFXSoundClass;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Debug")
 	bool bEnableAudioDebugLogs = false;
@@ -152,17 +162,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Volume")
 	float LowDroneVolume = 0.65f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ClampMin="0.0", UIMin="0.0", UIMax="1.0", ToolTip="Background music volume. Keep this lower than panic layers so heartbeat, roars, footsteps, drone, and horror stingers stay readable."))
-	float MusicVolume = 0.25f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ClampMin="0.0", UIMin="0.0", UIMax="1.0", ToolTip="Background music volume during normal play. The playlist keeps playing through panic and pickup states."))
+	float MusicVolume = 1.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ClampMin="0.0", UIMin="0.0", UIMax="1.0", ToolTip="Normal background music volume outside panic state."))
-	float NormalMusicVolume = 0.25f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ToolTip="Duck background music during panic so heartbeat, crowd, footsteps, and low drone stay in front."))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ToolTip="Slightly duck background music during panic so heartbeat, crowd, footsteps, and low drone stay in front without stopping the playlist."))
 	bool bEnableMusicDucking = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ClampMin="0.0", UIMin="0.0", UIMax="0.5", ToolTip="Background music volume while panic state is active."))
-	float PanicMusicVolume = 0.12f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ClampMin="0.0", UIMin="0.0", UIMax="1.0", ToolTip="Background music volume while panic state is active. The track keeps playing and only its volume changes."))
+	float PanicMusicVolume = 0.7f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Panic Audio | Music", meta=(ExposeOnSpawn="false", ClampMin="0.0", UIMin="0.0", UIMax="2.0", ToolTip="Fade time for ducking music down when panic starts."))
 	float MusicDuckFadeTime = 0.35f;
@@ -374,12 +381,13 @@ protected:
 	void PrintAudioDebug(const FString& Message) const;
 	void ReportAudioWarning(const FString& Message) const;
 	void LogAudioLayerStarted(const TCHAR* LayerName, USoundBase* Sound, float Volume) const;
+	void PlayOneShotSound(USoundBase* Sound, float Volume, float Pitch, USoundClass* SoundClassOverride, const TCHAR* DebugName);
 	void PlayAmbientSound(USoundBase* Sound, float Volume, const TCHAR* DebugName);
 	void PlayRoarSound(USoundBase* Sound, float Volume, const TCHAR* DebugName);
 	void PlayFootstepSound(USoundBase* Sound, float Volume, const TCHAR* DebugName);
-	UAudioComponent* CreateAudioLayer(USoundBase* Sound, float Volume, float Pitch, const TCHAR* DebugName);
+	UAudioComponent* CreateAudioLayer(USoundBase* Sound, float Volume, float Pitch, const TCHAR* DebugName, USoundClass* SoundClassOverride = nullptr);
 	UAudioComponent* FindReusableLayerComponent(TArray<TObjectPtr<UAudioComponent>>& Components, USoundBase* Sound) const;
-	bool FadeInExistingLayer(UAudioComponent* Component, USoundBase* Sound, float Volume, float FadeInDuration, const TCHAR* LayerName);
+	bool FadeInExistingLayer(UAudioComponent* Component, USoundBase* Sound, float Volume, float FadeInDuration, const TCHAR* LayerName, USoundClass* SoundClassOverride = nullptr);
 	void FadeOutReusableLayer(UAudioComponent* Component, float FadeOutDuration) const;
 	void FadeOutAndForget(UAudioComponent* Component, float FadeOutDuration) const;
 	void DebugMissingSound(const TCHAR* SoundName) const;

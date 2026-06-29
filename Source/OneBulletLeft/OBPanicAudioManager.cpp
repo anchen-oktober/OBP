@@ -62,7 +62,7 @@ void AOBPanicAudioManager::PlayShotSound(AActor* AudioFocus)
 		return;
 	}
 
-	UGameplayStatics::PlaySound2D(this, ShotSound, FMath::Max(ShotVolume, 0.0f), ShotPitch);
+	PlayOneShotSound(ShotSound, ShotVolume, ShotPitch, SFXSoundClass, TEXT("ShotSound"));
 }
 
 void AOBPanicAudioManager::StartPanicAudio(AActor* AudioFocus)
@@ -103,7 +103,7 @@ void AOBPanicAudioManager::StopPanicAudio(AActor* AudioFocus, bool bPlayBulletPi
 	{
 		if (BulletPickupSound)
 		{
-			UGameplayStatics::PlaySound2D(this, BulletPickupSound, FMath::Max(BulletPickupVolume, 0.0f), 1.0f);
+			PlayOneShotSound(BulletPickupSound, BulletPickupVolume, 1.0f, SFXSoundClass, TEXT("BulletPickupSound"));
 		}
 		else
 		{
@@ -195,24 +195,24 @@ void AOBPanicAudioManager::StartMusicLayer()
 
 	if (!MusicToPlay)
 	{
-		ReportAudioWarning(TEXT("Background music skipped: BackgroundMusicTracks is empty."));
+		ReportAudioWarning(TEXT("Background music skipped: BackgroundMusicPlaylist is empty or contains no valid tracks."));
 		return;
 	}
 
 	const float TargetMusicVolume = bPanicAudioActive && bEnableMusicDucking ? GetPanicMusicVolume() : GetBaseMusicVolume();
-	if (FadeInExistingLayer(BackgroundMusicComponent, MusicToPlay, TargetMusicVolume, MusicFadeIn, TEXT("Music")))
+	if (FadeInExistingLayer(BackgroundMusicComponent, MusicToPlay, TargetMusicVolume, MusicFadeIn, TEXT("Music"), MusicSoundClass))
 	{
 		return;
 	}
 
-	BackgroundMusicComponent = CreateAudioLayer(MusicToPlay, TargetMusicVolume, 1.0f, TEXT("BackgroundMusic"));
+	BackgroundMusicComponent = CreateAudioLayer(MusicToPlay, TargetMusicVolume, 1.0f, TEXT("BackgroundMusic"), MusicSoundClass);
 	if (BackgroundMusicComponent)
 	{
 		LogAudioLayerStarted(TEXT("Music"), MusicToPlay, TargetMusicVolume);
 		BackgroundMusicComponent->FadeIn(FMath::Max(MusicFadeIn, 0.0f), TargetMusicVolume);
 		if (bEnableAudioDebugLogs)
 		{
-			PrintAudioDebug(FString::Printf(TEXT("Start Music + volume %.2f | started=true | LoopMusic=%s"), TargetMusicVolume, bLoopMusic ? TEXT("true") : TEXT("false")));
+			PrintAudioDebug(FString::Printf(TEXT("Start Music + volume %.2f | started=true | playlist=persistent"), TargetMusicVolume));
 		}
 	}
 }
@@ -332,12 +332,12 @@ void AOBPanicAudioManager::StartHeartbeatLayer()
 		return;
 	}
 
-	if (FadeInExistingLayer(HeartbeatComponent, HeartbeatSound, HeartbeatVolume, HeartbeatFadeIn, TEXT("Heartbeat")))
+	if (FadeInExistingLayer(HeartbeatComponent, HeartbeatSound, HeartbeatVolume, HeartbeatFadeIn, TEXT("Heartbeat"), PanicSFXSoundClass))
 	{
 		return;
 	}
 
-	HeartbeatComponent = CreateAudioLayer(HeartbeatSound, HeartbeatVolume, 1.0f, TEXT("HeartbeatSound"));
+	HeartbeatComponent = CreateAudioLayer(HeartbeatSound, HeartbeatVolume, 1.0f, TEXT("HeartbeatSound"), PanicSFXSoundClass);
 	if (HeartbeatComponent)
 	{
 		LogAudioLayerStarted(TEXT("Heartbeat"), HeartbeatSound, HeartbeatVolume);
@@ -366,12 +366,12 @@ void AOBPanicAudioManager::StartLowDroneLayer()
 		return;
 	}
 
-	if (FadeInExistingLayer(LowDroneComponent, LowDroneSound, LowDroneVolume, LowDroneFadeIn, TEXT("Low Drone")))
+	if (FadeInExistingLayer(LowDroneComponent, LowDroneSound, LowDroneVolume, LowDroneFadeIn, TEXT("Low Drone"), PanicSFXSoundClass))
 	{
 		return;
 	}
 
-	LowDroneComponent = CreateAudioLayer(LowDroneSound, LowDroneVolume, 1.0f, TEXT("LowDroneSound"));
+	LowDroneComponent = CreateAudioLayer(LowDroneSound, LowDroneVolume, 1.0f, TEXT("LowDroneSound"), PanicSFXSoundClass);
 	if (LowDroneComponent)
 	{
 		LogAudioLayerStarted(TEXT("Low Drone"), LowDroneSound, LowDroneVolume);
@@ -470,23 +470,31 @@ void AOBPanicAudioManager::StopLowDroneLayer()
 
 void AOBPanicAudioManager::KeepLoopLayersAlive()
 {
-	if (bMusicEnabled && bLoopMusic && BackgroundMusicComponent && SelectedMusicSound && !BackgroundMusicComponent->IsPlaying())
+	if (bMusicEnabled && BackgroundMusicComponent && SelectedMusicSound && !BackgroundMusicComponent->IsPlaying())
 	{
+		if (USoundBase* NextMusicSound = SelectBackgroundMusicTrack())
+		{
+			SelectedMusicSound = NextMusicSound;
+		}
+
 		BackgroundMusicComponent->SetSound(SelectedMusicSound);
+		BackgroundMusicComponent->SoundClassOverride = MusicSoundClass;
 		const float TargetMusicVolume = bPanicAudioActive && bEnableMusicDucking ? GetPanicMusicVolume() : GetBaseMusicVolume();
-		LogAudioLayerStarted(TEXT("Music Restart"), SelectedMusicSound, TargetMusicVolume);
+		LogAudioLayerStarted(TEXT("Music Next Track"), SelectedMusicSound, TargetMusicVolume);
 		BackgroundMusicComponent->FadeIn(FMath::Max(MusicFadeIn, 0.0f), TargetMusicVolume);
 	}
 
 	if (bHeartbeatLayerActive && HeartbeatComponent && HeartbeatSound && !HeartbeatComponent->IsPlaying())
 	{
 		HeartbeatComponent->SetSound(HeartbeatSound);
+		HeartbeatComponent->SoundClassOverride = PanicSFXSoundClass;
 		HeartbeatComponent->FadeIn(FMath::Max(HeartbeatFadeIn, 0.0f), FMath::Max(HeartbeatVolume, 0.0f));
 	}
 
 	if (bPanicAudioActive && LowDroneComponent && LowDroneSound && !LowDroneComponent->IsPlaying())
 	{
 		LowDroneComponent->SetSound(LowDroneSound);
+		LowDroneComponent->SoundClassOverride = PanicSFXSoundClass;
 		LowDroneComponent->FadeIn(FMath::Max(LowDroneFadeIn, 0.0f), FMath::Max(LowDroneVolume, 0.0f));
 	}
 
@@ -563,12 +571,12 @@ void AOBPanicAudioManager::PlayRoarSound(USoundBase* Sound, float Volume, const 
 		return;
 	}
 
-	if (FadeInExistingLayer(FindReusableLayerComponent(ActiveRoarComponents, Sound), Sound, Volume, RoarFadeIn, TEXT("Roar")))
+	if (FadeInExistingLayer(FindReusableLayerComponent(ActiveRoarComponents, Sound), Sound, Volume, RoarFadeIn, TEXT("Roar"), PanicSFXSoundClass))
 	{
 		return;
 	}
 
-	if (UAudioComponent* Component = CreateAudioLayer(Sound, Volume, 1.0f, DebugName))
+	if (UAudioComponent* Component = CreateAudioLayer(Sound, Volume, 1.0f, DebugName, PanicSFXSoundClass))
 	{
 		ActiveRoarComponents.Add(Component);
 		LogAudioLayerStarted(TEXT("Roar"), Sound, Volume);
@@ -583,12 +591,12 @@ void AOBPanicAudioManager::PlayFootstepSound(USoundBase* Sound, float Volume, co
 		return;
 	}
 
-	if (FadeInExistingLayer(FindReusableLayerComponent(ActiveFootstepComponents, Sound), Sound, Volume, FootstepsFadeIn, TEXT("Footsteps")))
+	if (FadeInExistingLayer(FindReusableLayerComponent(ActiveFootstepComponents, Sound), Sound, Volume, FootstepsFadeIn, TEXT("Footsteps"), PanicSFXSoundClass))
 	{
 		return;
 	}
 
-	if (UAudioComponent* Component = CreateAudioLayer(Sound, Volume, 1.0f, DebugName))
+	if (UAudioComponent* Component = CreateAudioLayer(Sound, Volume, 1.0f, DebugName, PanicSFXSoundClass))
 	{
 		ActiveFootstepComponents.Add(Component);
 		LogAudioLayerStarted(TEXT("Footsteps"), Sound, Volume);
@@ -598,21 +606,16 @@ void AOBPanicAudioManager::PlayFootstepSound(USoundBase* Sound, float Volume, co
 
 USoundBase* AOBPanicAudioManager::SelectBackgroundMusicTrack()
 {
-	if (BackgroundMusicTracks.Num() == 0)
+	if (BackgroundMusicPlaylist.Num() == 0)
 	{
+		ReportAudioWarning(TEXT("Background music skipped: BackgroundMusicPlaylist is empty."));
 		return nullptr;
 	}
 
-	if (BackgroundMusicTracks.Num() > 5)
-	{
-		ReportAudioWarning(TEXT("BP_PanicAudioManager supports max 5 background music tracks."));
-	}
-
 	TArray<USoundBase*> ValidTracks;
-	const int32 MaxTrackCount = FMath::Min(BackgroundMusicTracks.Num(), 5);
-	for (int32 TrackIndex = 0; TrackIndex < MaxTrackCount; ++TrackIndex)
+	for (TObjectPtr<USoundBase>& TrackEntry : BackgroundMusicPlaylist)
 	{
-		if (USoundBase* Track = BackgroundMusicTracks[TrackIndex].Get())
+		if (USoundBase* Track = TrackEntry.Get())
 		{
 			ValidTracks.Add(Track);
 		}
@@ -620,22 +623,33 @@ USoundBase* AOBPanicAudioManager::SelectBackgroundMusicTrack()
 
 	if (ValidTracks.Num() == 0)
 	{
-		ReportAudioWarning(TEXT("Background music skipped: first 5 BackgroundMusicTracks entries are empty."));
+		ReportAudioWarning(TEXT("Background music skipped: BackgroundMusicPlaylist contains no valid tracks."));
 		return nullptr;
 	}
 
 	USoundBase* SelectedTrack = ValidTracks[0];
-	if (bRandomizeMusicOnStart && ValidTracks.Num() > 1)
+	if (bRandomizeMusic && ValidTracks.Num() > 1)
 	{
 		SelectedTrack = ValidTracks[FMath::RandRange(0, ValidTracks.Num() - 1)];
+		if (bAvoidRepeatSameTrack && LastSelectedMusicSound && SelectedTrack == LastSelectedMusicSound)
+		{
+			TArray<USoundBase*> NonRepeatedTracks = ValidTracks;
+			NonRepeatedTracks.Remove(LastSelectedMusicSound.Get());
+			if (NonRepeatedTracks.Num() > 0)
+			{
+				SelectedTrack = NonRepeatedTracks[FMath::RandRange(0, NonRepeatedTracks.Num() - 1)];
+			}
+		}
 	}
+
+	LastSelectedMusicSound = SelectedTrack;
 
 	if (bEnableAudioDebugLogs)
 	{
 		UE_LOG(
 			LogOBPanicAudio,
 			Log,
-			TEXT("Background music tracks found: %d | Selected music track: %s | MusicVolume: %.2f"),
+			TEXT("Background music playlist tracks found: %d | Selected music track: %s | MusicVolume: %.2f"),
 			ValidTracks.Num(),
 			*GetNameSafe(SelectedTrack),
 			GetBaseMusicVolume());
@@ -646,7 +660,7 @@ USoundBase* AOBPanicAudioManager::SelectBackgroundMusicTrack()
 
 float AOBPanicAudioManager::GetBaseMusicVolume() const
 {
-	return FMath::Max(NormalMusicVolume, 0.0f);
+	return FMath::Max(MusicVolume, 0.0f);
 }
 
 float AOBPanicAudioManager::GetPanicMusicVolume() const
@@ -695,7 +709,7 @@ void AOBPanicAudioManager::RestoreMusicAfterPanic()
 		return;
 	}
 
-	SetBackgroundMusicVolume(GetBaseMusicVolume(), MusicRestoreFadeTime, TEXT("Music restored to NormalMusicVolume"));
+	SetBackgroundMusicVolume(GetBaseMusicVolume(), MusicRestoreFadeTime, TEXT("Music restored to MusicVolume"));
 }
 
 bool AOBPanicAudioManager::IsLayerVolumeAudible(const TCHAR* LayerName, float Volume) const
@@ -801,7 +815,30 @@ void AOBPanicAudioManager::LogAudioLayerStarted(const TCHAR* LayerName, USoundBa
 		*SoundClassName);
 }
 
-UAudioComponent* AOBPanicAudioManager::CreateAudioLayer(USoundBase* Sound, float Volume, float Pitch, const TCHAR* DebugName)
+void AOBPanicAudioManager::PlayOneShotSound(USoundBase* Sound, float Volume, float Pitch, USoundClass* SoundClassOverride, const TCHAR* DebugName)
+{
+	if (!Sound)
+	{
+		DebugMissingSound(DebugName);
+		return;
+	}
+
+	UAudioComponent* Component = UGameplayStatics::SpawnSound2D(
+		this,
+		Sound,
+		FMath::Max(Volume, 0.0f),
+		FMath::Max(Pitch, 0.1f),
+		0.0f,
+		nullptr,
+		true,
+		false);
+	if (Component && SoundClassOverride)
+	{
+		Component->SoundClassOverride = SoundClassOverride;
+	}
+}
+
+UAudioComponent* AOBPanicAudioManager::CreateAudioLayer(USoundBase* Sound, float Volume, float Pitch, const TCHAR* DebugName, USoundClass* SoundClassOverride)
 {
 	if (!Sound)
 	{
@@ -825,6 +862,7 @@ UAudioComponent* AOBPanicAudioManager::CreateAudioLayer(USoundBase* Sound, float
 
 	Component->bAllowSpatialization = false;
 	Component->bAutoDestroy = false;
+	Component->SoundClassOverride = SoundClassOverride;
 	Component->SetVolumeMultiplier(FMath::Max(Volume, 0.0f));
 	return Component;
 }
@@ -854,7 +892,7 @@ UAudioComponent* AOBPanicAudioManager::FindReusableLayerComponent(TArray<TObject
 	return nullptr;
 }
 
-bool AOBPanicAudioManager::FadeInExistingLayer(UAudioComponent* Component, USoundBase* Sound, float Volume, float FadeInDuration, const TCHAR* LayerName)
+bool AOBPanicAudioManager::FadeInExistingLayer(UAudioComponent* Component, USoundBase* Sound, float Volume, float FadeInDuration, const TCHAR* LayerName, USoundClass* SoundClassOverride)
 {
 	if (!Component || !Sound)
 	{
@@ -863,6 +901,7 @@ bool AOBPanicAudioManager::FadeInExistingLayer(UAudioComponent* Component, USoun
 
 	Component->bAutoDestroy = false;
 	Component->SetSound(Sound);
+	Component->SoundClassOverride = SoundClassOverride;
 	Component->SetVolumeMultiplier(FMath::Max(Volume, 0.0f));
 	LogAudioLayerStarted(LayerName, Sound, Volume);
 	Component->FadeIn(FMath::Max(FadeInDuration, 0.0f), FMath::Max(Volume, 0.0f));
