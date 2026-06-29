@@ -1,5 +1,6 @@
 #include "OBCharacter.h"
 
+#include "Animation/AnimSingleNodeInstance.h"
 #include "Animation/AnimationAsset.h"
 #include "Animation/AnimSequence.h"
 #include "Camera/CameraComponent.h"
@@ -147,7 +148,9 @@ void AOBCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	UpdateDodge(DeltaSeconds);
+	UpdateKickDash(DeltaSeconds);
 	UpdateRecoil(DeltaSeconds);
+	UpdateKickCameraTilt(DeltaSeconds);
 	UpdateKickFOVPunch(DeltaSeconds);
 	UpdateSimpleLocomotionAnimation();
 	UpdateWeaponPose(DeltaSeconds);
@@ -370,44 +373,43 @@ void AOBCharacter::Kick()
 	bKickReady = false;
 	bKickRecovering = true;
 	GetWorldTimerManager().SetTimer(KickCooldownTimerHandle, this, &AOBCharacter::ResetKick, KickCooldown, false);
-	GetWorldTimerManager().SetTimer(KickRecoveryTimerHandle, this, &AOBCharacter::FinishKickRecovery, KickRecoveryDuration, false);
-	PlayActionAnimation(KickAnimation, KickAnimationDuration);
+	GetWorldTimerManager().SetTimer(KickRecoveryTimerHandle, this, &AOBCharacter::FinishKickRecovery, FMath::Max(KickRecoveryTime, 0.01f), false);
+	GetWorldTimerManager().SetTimer(KickImpactTimerHandle, this, &AOBCharacter::ApplyKickImpact, KickImpactDelay, false);
+	PlayActionAnimation(KickAnimation, KickAnimationDuration, KickPlayRate, true);
+	StartKickWeaponSway();
+	PlayKickStartFeedback();
+}
 
-	const UCameraComponent* ShoveCamera = GetShootingCamera();
-	FVector PushForward = ShoveCamera ? ShoveCamera->GetForwardVector().GetSafeNormal2D() : GetActorForwardVector().GetSafeNormal2D();
+void AOBCharacter::ApplyKickImpact()
+{
+	if (bDead)
+	{
+		return;
+	}
+
+	FVector PushForward = GetActorForwardVector().GetSafeNormal2D();
 	if (PushForward.IsNearlyZero())
 	{
-		PushForward = GetActorForwardVector().GetSafeNormal2D();
+		PushForward = FVector::ForwardVector;
 	}
 	const FVector Start = GetActorLocation() + FVector::UpVector * 45.0f;
-	const FVector End = Start + PushForward * KickRange;
-	const float HalfConeRadians = FMath::DegreesToRadians(FMath::Clamp(KickConeAngleDegrees, 1.0f, 180.0f) * 0.5f);
-	const float ConeDotThreshold = FMath::Cos(HalfConeRadians);
+	const FVector End = Start + PushForward * KickTraceDistance;
 
 	TArray<AOBEnemy*> HitEnemies;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(OneBulletKick), false, this);
-	const FCollisionShape Sphere = FCollisionShape::MakeSphere(KickRadius);
-	constexpr float TraceYawOffsets[] = {0.0f, -24.0f, 24.0f};
+	const FCollisionShape Sphere = FCollisionShape::MakeSphere(KickTraceRadius);
 
-	for (const float YawOffset : TraceYawOffsets)
+	TArray<FHitResult> Hits;
+	GetWorld()->SweepMultiByChannel(Hits, Start, End, FQuat::Identity, ECC_Pawn, Sphere, Params);
+	for (const FHitResult& Hit : Hits)
 	{
-		TArray<FHitResult> Hits;
-		const FVector TraceDirection = PushForward.RotateAngleAxis(YawOffset, FVector::UpVector).GetSafeNormal2D();
-		GetWorld()->SweepMultiByChannel(Hits, Start, Start + TraceDirection * KickRange, FQuat::Identity, ECC_Pawn, Sphere, Params);
-		for (const FHitResult& Hit : Hits)
+		AOBEnemy* Enemy = Cast<AOBEnemy>(Hit.GetActor());
+		if (!Enemy || Enemy->IsDead())
 		{
-			AOBEnemy* Enemy = Cast<AOBEnemy>(Hit.GetActor());
-			if (!Enemy || Enemy->IsDead())
-			{
-				continue;
-			}
-
-			const FVector ToEnemy = (Enemy->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
-			if (ToEnemy.IsNearlyZero() || FVector::DotProduct(PushForward, ToEnemy) >= ConeDotThreshold)
-			{
-				HitEnemies.AddUnique(Enemy);
-			}
+			continue;
 		}
+
+		HitEnemies.AddUnique(Enemy);
 	}
 
 	for (AOBEnemy* Enemy : HitEnemies)
@@ -420,21 +422,19 @@ void AOBCharacter::Kick()
 		const FVector AwayFromPlayer = (Enemy->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
 		Enemy->ApplyKick(
 			AwayFromPlayer.IsNearlyZero() ? PushForward : AwayFromPlayer,
-			KickPushDistance,
+			KickKnockbackStrength,
 			KickPushDuration,
 			KickStunDuration,
 			KickSlowMultiplier,
 			KickSlowDuration);
 	}
 
-	if (KickPlayerLungeDistance > KINDA_SMALL_NUMBER && !PushForward.IsNearlyZero())
-	{
-		FHitResult LungeHit;
-		AddActorWorldOffset(PushForward * KickPlayerLungeDistance, true, &LungeHit);
-	}
-
 	const int32 HitEnemyCount = HitEnemies.Num();
-	PlayKickFeedback(GetActorLocation(), PushForward, HitEnemyCount);
+	PlayKickImpactFeedback(GetActorLocation(), PushForward, HitEnemyCount);
+	if (KickImpactHitStopDuration > KINDA_SMALL_NUMBER)
+	{
+		ApplyFeelStop(KickImpactHitStopDuration);
+	}
 	OnPlayerKick(Start, End, HitEnemyCount);
 }
 
@@ -537,10 +537,17 @@ void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& 
 	bKickRecovering = false;
 	bKickFOVPunchActive = false;
 	bKickFOVReturning = false;
+	bKickDashing = false;
+	bKickWeaponSwayActive = false;
 	ActiveDodgeDirection = FVector::ZeroVector;
+	ActiveKickDashDirection = FVector::ZeroVector;
 	ActiveDodgeElapsed = 0.0f;
 	ActiveDodgePreviousAlpha = 0.0f;
+	ActiveKickDashElapsed = 0.0f;
+	ActiveKickDashPreviousAlpha = 0.0f;
+	ActiveKickWeaponSwayElapsed = 0.0f;
 	RemainingRecoilPitch = 0.0f;
+	RemainingKickCameraTiltDown = 0.0f;
 	SetWeaponBulletReady(true, true);
 	if (AOBGameMode* OneBulletMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOBGameMode>() : nullptr)
 	{
@@ -549,6 +556,7 @@ void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& 
 
 	GetWorldTimerManager().ClearTimer(KickCooldownTimerHandle);
 	GetWorldTimerManager().ClearTimer(KickRecoveryTimerHandle);
+	GetWorldTimerManager().ClearTimer(KickImpactTimerHandle);
 	GetWorldTimerManager().ClearTimer(DodgeCooldownTimerHandle);
 	GetWorldTimerManager().ClearTimer(ActionAnimationTimerHandle);
 	RestoreMovementAnimation();
@@ -577,6 +585,16 @@ void AOBCharacter::DieWithReason(const FText& DeathReason)
 	}
 
 	bDead = true;
+	bKickRecovering = false;
+	bKickDashing = false;
+	bKickWeaponSwayActive = false;
+	ActiveKickDashDirection = FVector::ZeroVector;
+	ActiveKickDashElapsed = 0.0f;
+	ActiveKickDashPreviousAlpha = 0.0f;
+	ActiveKickWeaponSwayElapsed = 0.0f;
+	RemainingKickCameraTiltDown = 0.0f;
+	GetWorldTimerManager().ClearTimer(KickRecoveryTimerHandle);
+	GetWorldTimerManager().ClearTimer(KickImpactTimerHandle);
 	GetCharacterMovement()->DisableMovement();
 	PlayDeathAnimation();
 	OnPlayerDeath();
@@ -627,6 +645,47 @@ void AOBCharacter::UpdateRecoil(float DeltaSeconds)
 	const float Recovery = FMath::Min(RemainingRecoilPitch, RecoilRecoverySpeed * DeltaSeconds);
 	AddControllerPitchInput(Recovery);
 	RemainingRecoilPitch -= Recovery;
+}
+
+void AOBCharacter::UpdateKickDash(float DeltaSeconds)
+{
+	if (!bKickDashing)
+	{
+		return;
+	}
+
+	ActiveKickDashElapsed += DeltaSeconds;
+	const float Duration = FMath::Max(KickDashDuration, 0.01f);
+	const float RawAlpha = FMath::Clamp(ActiveKickDashElapsed / Duration, 0.0f, 1.0f);
+	const float SmoothedAlpha = FMath::InterpEaseOut(0.0f, 1.0f, RawAlpha, 2.0f);
+	const float AlphaStep = SmoothedAlpha - ActiveKickDashPreviousAlpha;
+	ActiveKickDashPreviousAlpha = SmoothedAlpha;
+
+	if (!ActiveKickDashDirection.IsNearlyZero() && KickDashDistance > KINDA_SMALL_NUMBER && AlphaStep > 0.0f)
+	{
+		FHitResult DashHit;
+		AddActorWorldOffset(ActiveKickDashDirection * KickDashDistance * AlphaStep, true, &DashHit);
+	}
+
+	if (RawAlpha >= 1.0f)
+	{
+		bKickDashing = false;
+		ActiveKickDashDirection = FVector::ZeroVector;
+		ActiveKickDashElapsed = 0.0f;
+		ActiveKickDashPreviousAlpha = 0.0f;
+	}
+}
+
+void AOBCharacter::UpdateKickCameraTilt(float DeltaSeconds)
+{
+	if (RemainingKickCameraTiltDown <= KINDA_SMALL_NUMBER || !Controller)
+	{
+		return;
+	}
+
+	const float Recovery = FMath::Min(RemainingKickCameraTiltDown, KickCameraTiltRecoverySpeed * DeltaSeconds);
+	AddControllerPitchInput(-Recovery);
+	RemainingKickCameraTiltDown -= Recovery;
 }
 
 void AOBCharacter::UpdateKickFOVPunch(float DeltaSeconds)
@@ -682,22 +741,68 @@ void AOBCharacter::StartKickFOVPunch()
 	bKickFOVReturning = false;
 }
 
-void AOBCharacter::PlayKickFeedback(const FVector& Origin, const FVector& Direction, int32 HitEnemyCount)
+void AOBCharacter::StartKickDash(const FVector& Direction)
 {
-	if (KickSound)
+	ActiveKickDashDirection = Direction.GetSafeNormal2D();
+	if (ActiveKickDashDirection.IsNearlyZero() || KickDashDistance <= KINDA_SMALL_NUMBER)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, KickSound, Origin);
+		return;
 	}
-	if (KickPushEffect)
+
+	bKickDashing = true;
+	ActiveKickDashElapsed = 0.0f;
+	ActiveKickDashPreviousAlpha = 0.0f;
+}
+
+void AOBCharacter::StartKickWeaponSway()
+{
+	bKickWeaponSwayActive = true;
+	ActiveKickWeaponSwayElapsed = 0.0f;
+}
+
+void AOBCharacter::PlayKickStartFeedback()
+{
+	if (KickWhooshSound)
 	{
-		const FVector EffectLocation = Origin + Direction.GetSafeNormal2D() * 60.0f;
+		UGameplayStatics::PlaySoundAtLocation(this, KickWhooshSound, GetActorLocation());
+	}
+	else if (KickSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, KickSound, GetActorLocation());
+	}
+
+	if (Controller && KickCameraTiltDownAmount > KINDA_SMALL_NUMBER)
+	{
+		AddControllerPitchInput(KickCameraTiltDownAmount);
+		RemainingKickCameraTiltDown += KickCameraTiltDownAmount;
+	}
+}
+
+void AOBCharacter::PlayKickImpactFeedback(const FVector& Origin, const FVector& Direction, int32 HitEnemyCount)
+{
+	const FVector SafeDirection = Direction.GetSafeNormal2D();
+	const FVector EffectLocation = Origin + SafeDirection * 85.0f - FVector::UpVector * 35.0f;
+
+	if (KickImpactSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, KickImpactSound, EffectLocation);
+	}
+	else if (KickSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, KickSound, EffectLocation);
+	}
+
+	UParticleSystem* ImpactEffect = KickImpactVFX ? KickImpactVFX.Get() : KickPushEffect.Get();
+	if (ImpactEffect)
+	{
 		UGameplayStatics::SpawnEmitterAtLocation(
 			GetWorld(),
-			KickPushEffect,
-			FTransform(Direction.Rotation(), EffectLocation),
+			ImpactEffect,
+			FTransform(SafeDirection.Rotation(), EffectLocation),
 			true,
 			EPSCPoolMethod::AutoRelease);
 	}
+
 	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
 	{
 		if (KickCameraShake && PlayerController->PlayerCameraManager)
@@ -707,6 +812,19 @@ void AOBCharacter::PlayKickFeedback(const FVector& Origin, const FVector& Direct
 	}
 
 	StartKickFOVPunch();
+
+	if (Controller)
+	{
+		if (KickImpactCameraPitchPunch > KINDA_SMALL_NUMBER)
+		{
+			AddControllerPitchInput(KickImpactCameraPitchPunch);
+			RemainingKickCameraTiltDown += KickImpactCameraPitchPunch;
+		}
+		if (KickImpactCameraYawPunch > KINDA_SMALL_NUMBER)
+		{
+			AddControllerYawInput(FMath::FRandRange(-KickImpactCameraYawPunch, KickImpactCameraYawPunch));
+		}
+	}
 }
 
 void AOBCharacter::ApplyFeelStop(float Duration)
@@ -950,6 +1068,8 @@ void AOBCharacter::ApplyWeaponReadyTransform(bool bSnap)
 {
 	if (!WeaponMesh || !bWeaponBulletReady)
 	{
+		bKickWeaponSwayActive = false;
+		ActiveKickWeaponSwayElapsed = 0.0f;
 		return;
 	}
 
@@ -989,7 +1109,22 @@ void AOBCharacter::UpdateWeaponPose(float DeltaSeconds)
 		return;
 	}
 
-	const FTransform& TargetTransform = GetWeaponReadyTargetTransform();
+	FTransform TargetTransform = GetWeaponReadyTargetTransform();
+	if (bKickWeaponSwayActive)
+	{
+		ActiveKickWeaponSwayElapsed += DeltaSeconds;
+		const float Duration = FMath::Max(KickWeaponSwayDuration, 0.01f);
+		const float RawAlpha = FMath::Clamp(ActiveKickWeaponSwayElapsed / Duration, 0.0f, 1.0f);
+		const float SwayAlpha = FMath::Sin(RawAlpha * PI);
+		TargetTransform.AddToTranslation(FVector(-KickWeaponSwayBack, 0.0f, -KickWeaponSwayDown) * SwayAlpha);
+		TargetTransform.ConcatenateRotation(FRotator(-KickWeaponSwayPitch * SwayAlpha, 0.0f, 0.0f).Quaternion());
+		if (RawAlpha >= 1.0f)
+		{
+			bKickWeaponSwayActive = false;
+			ActiveKickWeaponSwayElapsed = 0.0f;
+		}
+	}
+
 	if (WeaponPoseBlendSpeed <= KINDA_SMALL_NUMBER)
 	{
 		WeaponMesh->SetRelativeTransform(TargetTransform);
@@ -1157,7 +1292,7 @@ void AOBCharacter::HideFirstPersonHead()
 	GetMesh()->HideBoneByName(TEXT("head"), EPhysBodyOp::PBO_None);
 }
 
-void AOBCharacter::PlayActionAnimation(UAnimationAsset* Animation, float Duration)
+void AOBCharacter::PlayActionAnimation(UAnimationAsset* Animation, float Duration, float PlayRate, bool bUseFullAnimationLength)
 {
 	if (!Animation || !GetMesh())
 	{
@@ -1173,12 +1308,22 @@ void AOBCharacter::PlayActionAnimation(UAnimationAsset* Animation, float Duratio
 	bPlayingActionAnimation = true;
 	GetMesh()->SetAnimationMode(EAnimationMode::AnimationSingleNode);
 	GetMesh()->PlayAnimation(Animation, false);
+	if (UAnimSingleNodeInstance* SingleNodeInstance = GetMesh()->GetSingleNodeInstance())
+	{
+		SingleNodeInstance->SetPlayRate(FMath::Max(PlayRate, 0.01f));
+	}
 	if (FullBodyShadowMesh)
 	{
 		FullBodyShadowMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
 		FullBodyShadowMesh->PlayAnimation(Animation, false);
+		if (UAnimSingleNodeInstance* ShadowSingleNodeInstance = FullBodyShadowMesh->GetSingleNodeInstance())
+		{
+			ShadowSingleNodeInstance->SetPlayRate(FMath::Max(PlayRate, 0.01f));
+		}
 	}
-	GetWorldTimerManager().SetTimer(ActionAnimationTimerHandle, this, &AOBCharacter::RestoreMovementAnimation, FMath::Max(Duration, 0.01f), false);
+	const float BaseDuration = bUseFullAnimationLength ? FMath::Max(Duration, Animation->GetPlayLength()) : Duration;
+	const float ScaledDuration = BaseDuration / FMath::Max(PlayRate, 0.01f);
+	GetWorldTimerManager().SetTimer(ActionAnimationTimerHandle, this, &AOBCharacter::RestoreMovementAnimation, FMath::Max(ScaledDuration, 0.01f), false);
 }
 
 void AOBCharacter::PlayDeathAnimation()

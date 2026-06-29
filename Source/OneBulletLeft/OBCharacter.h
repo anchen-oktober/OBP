@@ -110,6 +110,45 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick")
 	float KickRadius = 180.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.1", UIMin="1.7", UIMax="2.3"))
+	float KickPlayRate = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="0.12", UIMax="0.20"))
+	float KickImpactDelay = 0.16f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="0.18", UIMax="0.35"))
+	float KickRecoveryTime = 0.24f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="20.0", UIMax="60.0"))
+	float KickDashDistance = 72.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.01", UIMin="0.05", UIMax="0.14"))
+	float KickDashDuration = 0.06f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="500.0", UIMax="900.0"))
+	float KickKnockbackStrength = 720.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="130.0", UIMax="190.0"))
+	float KickTraceDistance = 165.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="50.0", UIMax="80.0"))
+	float KickTraceRadius = 65.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel", meta=(ClampMin="0.0", UIMin="0.0", UIMax="3.0"))
+	float KickCameraTiltDownAmount = 4.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel", meta=(ClampMin="1.0", UIMin="12.0", UIMax="28.0"))
+	float KickCameraTiltRecoverySpeed = 20.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel", meta=(ClampMin="0.0", UIMin="0.0", UIMax="4.0"))
+	float KickImpactCameraPitchPunch = 2.2f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel", meta=(ClampMin="0.0", UIMin="0.0", UIMax="3.0"))
+	float KickImpactCameraYawPunch = 1.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel", meta=(ClampMin="0.0", UIMin="0.0", UIMax="1.0"))
+	float KickImpactHitStopDuration = 0.025f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="1.0", ClampMax="180.0", UIMin="60.0", UIMax="90.0"))
 	float KickConeAngleDegrees = 80.0f;
 
@@ -141,7 +180,19 @@ public:
 	TSubclassOf<UCameraShakeBase> KickCameraShake;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel", meta=(ClampMin="0.0", UIMin="0.0", UIMax="8.0"))
-	float KickFOVPunchAmount = 4.0f;
+	float KickFOVPunchAmount = 7.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel", meta=(ClampMin="0.0", UIMin="0.0", UIMax="20.0"))
+	float KickWeaponSwayBack = 10.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel", meta=(ClampMin="0.0", UIMin="0.0", UIMax="12.0"))
+	float KickWeaponSwayDown = 7.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel", meta=(ClampMin="0.0", UIMin="0.0", UIMax="15.0"))
+	float KickWeaponSwayPitch = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel", meta=(ClampMin="0.01", UIMin="0.08", UIMax="0.22"))
+	float KickWeaponSwayDuration = 0.16f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel", meta=(ClampMin="0.01", UIMin="0.05", UIMax="0.2"))
 	float KickFOVPunchInDuration = 0.06f;
@@ -152,11 +203,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel")
 	TObjectPtr<UParticleSystem> KickPushEffect;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel")
+	TObjectPtr<USoundBase> KickWhooshSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel")
+	TObjectPtr<USoundBase> KickImpactSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel")
+	TObjectPtr<UParticleSystem> KickImpactVFX;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
 	TObjectPtr<UAnimationAsset> KickAnimation;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
-	float KickAnimationDuration = 0.55f;
+	float KickAnimationDuration = 0.45f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
 	TObjectPtr<UAnimationAsset> ShootAnimation;
@@ -394,13 +454,20 @@ protected:
 	bool bKickRecovering = false;
 	bool bKickFOVPunchActive = false;
 	bool bKickFOVReturning = false;
+	bool bKickDashing = false;
+	bool bKickWeaponSwayActive = false;
 
 	FVector ActiveDodgeDirection = FVector::ZeroVector;
+	FVector ActiveKickDashDirection = FVector::ZeroVector;
 	float LastMoveForwardInput = 0.0f;
 	float LastMoveRightInput = 0.0f;
 	float ActiveDodgeElapsed = 0.0f;
 	float ActiveDodgePreviousAlpha = 0.0f;
+	float ActiveKickDashElapsed = 0.0f;
+	float ActiveKickDashPreviousAlpha = 0.0f;
+	float ActiveKickWeaponSwayElapsed = 0.0f;
 	float RemainingRecoilPitch = 0.0f;
+	float RemainingKickCameraTiltDown = 0.0f;
 	float DefaultFirstPersonFOV = 90.0f;
 	float DefaultThirdPersonFOV = 90.0f;
 	float KickFOVElapsed = 0.0f;
@@ -412,6 +479,7 @@ protected:
 	FTimerHandle FeelStopTimerHandle;
 	FTimerHandle ActionAnimationTimerHandle;
 	FTimerHandle KickRecoveryTimerHandle;
+	FTimerHandle KickImpactTimerHandle;
 
 	TSubclassOf<UAnimInstance> DefaultPlayerAnimClass;
 
@@ -424,13 +492,19 @@ protected:
 	void RestartLevel();
 	void ToggleEnemyDetectionRadiusVisualization();
 	void ResetKick();
+	void ApplyKickImpact();
 	void FinishKickRecovery();
 	void ResetDodge();
 	void UpdateDodge(float DeltaSeconds);
+	void UpdateKickDash(float DeltaSeconds);
 	void UpdateRecoil(float DeltaSeconds);
+	void UpdateKickCameraTilt(float DeltaSeconds);
 	void UpdateKickFOVPunch(float DeltaSeconds);
 	void StartKickFOVPunch();
-	void PlayKickFeedback(const FVector& Origin, const FVector& Direction, int32 HitEnemyCount);
+	void StartKickDash(const FVector& Direction);
+	void StartKickWeaponSway();
+	void PlayKickStartFeedback();
+	void PlayKickImpactFeedback(const FVector& Origin, const FVector& Direction, int32 HitEnemyCount);
 	void ApplyFeelStop(float Duration);
 	void ResetFeelStop();
 	bool TryFindSafeDodgeDirection(FVector& OutDirection) const;
@@ -450,7 +524,7 @@ protected:
 	void PlayWeaponShootAnimation();
 	FVector GetBulletVisualStartLocation(const FVector& TraceStart) const;
 	FVector ResolveBulletDropLocationAfterImpact(const FHitResult& Hit) const;
-	void PlayActionAnimation(UAnimationAsset* Animation, float Duration);
+	void PlayActionAnimation(UAnimationAsset* Animation, float Duration, float PlayRate = 1.0f, bool bUseFullAnimationLength = false);
 	void PlayDeathAnimation();
 	void UpdateSimpleLocomotionAnimation();
 	void RestoreMovementAnimation();
