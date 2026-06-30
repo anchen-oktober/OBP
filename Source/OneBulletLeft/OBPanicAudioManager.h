@@ -1,13 +1,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Components/AudioComponent.h"
 #include "GameFramework/Actor.h"
 #include "OBPanicAudioManager.generated.h"
 
 class USceneComponent;
 class USoundBase;
 class USoundClass;
-class UAudioComponent;
 
 UENUM(BlueprintType)
 enum class ECrowdRoarMode : uint8
@@ -157,7 +157,7 @@ public:
 	float BulletPickupVolume = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Volume")
-	float HeartbeatVolume = 1.0f;
+	float HeartbeatVolume = 1.15f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Volume")
 	float LowDroneVolume = 0.65f;
@@ -192,6 +192,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Volume")
 	float FootstepRun2Volume = 0.85f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Footsteps", meta=(ClampMin="0.0", UIMin="0.0", UIMax="2.0", ToolTip="Multiplier for the panic footsteps layer. Roar fade does not modify this value."))
+	float PanicFootstepsVolume = 1.2f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Volume")
 	float WhisperVolume = 0.5f;
 
@@ -199,10 +202,10 @@ public:
 	float GhostVolume = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
-	float HeartbeatFadeIn = 0.3f;
+	float HeartbeatFadeInDuration = 0.3f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
-	float HeartbeatFadeOut = 0.5f;
+	float HeartbeatFadeOutDuration = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
 	float LowDroneFadeIn = 0.25f;
@@ -222,11 +225,26 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
 	float RoarFadeOut = 1.2f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
-	float FootstepsFadeIn = 0.5f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Roar", meta=(ClampMin="0.0", UIMin="0.0", UIMax="5.0", ToolTip="Delay after the panic roar starts before the roar-only fade out begins. Does not affect heartbeat, footsteps, low drone, or music."))
+	float PanicRoarFadeOutDelay = 1.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Roar", meta=(ClampMin="0.0", UIMin="0.0", UIMax="10.0", ToolTip="Duration for fading out only the panic roar layer after a shot."))
+	float PanicRoarFadeOutDuration = 6.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Roar", meta=(ClampMin="0.0", UIMin="0.0", UIMax="2.0", ToolTip="Multiplier applied to Roar1/2/3 volumes when a new panic roar burst starts."))
+	float PanicRoarVolume = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Roar", meta=(ClampMin="0.0", UIMin="0.0", UIMax="1.0", ToolTip="Target volume for the roar-only auto fade. Set to 0 to stop the roar completely after the fade."))
+	float PanicRoarEndVolume = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Roar", meta=(ToolTip="Curve used by the roar-only automatic fade out. Does not affect heartbeat, footsteps, low drone, or music."))
+	EAudioFaderCurve PanicRoarFadeOutCurve = EAudioFaderCurve::SCurve;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
-	float FootstepsFadeOut = 1.0f;
+	float FootstepsFadeInDuration = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
+	float FootstepsFadeOutDuration = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Panic Audio|Fade")
 	float AmbientFadeIn = 2.0f;
@@ -340,6 +358,8 @@ protected:
 	FTimerHandle PanicAudioDelayTimerHandle;
 	FTimerHandle LowDroneStartTimerHandle;
 	FTimerHandle RoarStartTimerHandle;
+	FTimerHandle RoarAutoFadeOutTimerHandle;
+	FTimerHandle RoarAutoFadeOutCleanupTimerHandle;
 	FTimerHandle FootstepsStartTimerHandle;
 	FTimerHandle AmbientHorrorTimerHandle;
 	FTimerHandle AudioBalanceTestTimerHandle;
@@ -365,6 +385,11 @@ protected:
 	void StartLowDroneLayer();
 	void StartCrowdRoarLayer();
 	void StopCrowdRoarLayer();
+	void RestartCrowdRoarLayer();
+	void StopRoarComponentsImmediately();
+	void SchedulePanicRoarFadeOut();
+	void BeginPanicRoarFadeOut();
+	void CleanupStoppedRoarComponents();
 	void StartCrowdFootstepsLayer();
 	void StopCrowdFootstepsLayer();
 	void StopLowDroneLayer();

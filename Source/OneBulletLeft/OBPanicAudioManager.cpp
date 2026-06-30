@@ -69,6 +69,11 @@ void AOBPanicAudioManager::StartPanicAudio(AActor* AudioFocus)
 {
 	if (bPanicAudioActive)
 	{
+		if (AudioFocus)
+		{
+			SetActorLocation(AudioFocus->GetActorLocation());
+		}
+		RestartCrowdRoarLayer();
 		return;
 	}
 
@@ -91,6 +96,8 @@ void AOBPanicAudioManager::StopPanicAudio(AActor* AudioFocus, bool bPlayBulletPi
 		World->GetTimerManager().ClearTimer(PanicAudioDelayTimerHandle);
 		World->GetTimerManager().ClearTimer(LowDroneStartTimerHandle);
 		World->GetTimerManager().ClearTimer(RoarStartTimerHandle);
+		World->GetTimerManager().ClearTimer(RoarAutoFadeOutTimerHandle);
+		World->GetTimerManager().ClearTimer(RoarAutoFadeOutCleanupTimerHandle);
 		World->GetTimerManager().ClearTimer(FootstepsStartTimerHandle);
 	}
 
@@ -332,7 +339,7 @@ void AOBPanicAudioManager::StartHeartbeatLayer()
 		return;
 	}
 
-	if (FadeInExistingLayer(HeartbeatComponent, HeartbeatSound, HeartbeatVolume, HeartbeatFadeIn, TEXT("Heartbeat"), PanicSFXSoundClass))
+	if (FadeInExistingLayer(HeartbeatComponent, HeartbeatSound, HeartbeatVolume, HeartbeatFadeInDuration, TEXT("Heartbeat"), PanicSFXSoundClass))
 	{
 		return;
 	}
@@ -341,7 +348,7 @@ void AOBPanicAudioManager::StartHeartbeatLayer()
 	if (HeartbeatComponent)
 	{
 		LogAudioLayerStarted(TEXT("Heartbeat"), HeartbeatSound, HeartbeatVolume);
-		HeartbeatComponent->FadeIn(FMath::Max(HeartbeatFadeIn, 0.0f), FMath::Max(HeartbeatVolume, 0.0f));
+		HeartbeatComponent->FadeIn(FMath::Max(HeartbeatFadeInDuration, 0.0f), FMath::Max(HeartbeatVolume, 0.0f));
 	}
 }
 
@@ -350,7 +357,7 @@ void AOBPanicAudioManager::StopHeartbeatLayer()
 	bHeartbeatLayerActive = false;
 	if (HeartbeatComponent && HeartbeatComponent->IsPlaying())
 	{
-		FadeOutReusableLayer(HeartbeatComponent, HeartbeatFadeOut);
+		FadeOutReusableLayer(HeartbeatComponent, HeartbeatFadeOutDuration);
 	}
 }
 
@@ -381,6 +388,13 @@ void AOBPanicAudioManager::StartLowDroneLayer()
 
 void AOBPanicAudioManager::StartCrowdRoarLayer()
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(RoarAutoFadeOutTimerHandle);
+		World->GetTimerManager().ClearTimer(RoarAutoFadeOutCleanupTimerHandle);
+	}
+
+	StopRoarComponentsImmediately();
 	bRoarLayerActive = true;
 
 	switch (RoarMode)
@@ -420,14 +434,122 @@ void AOBPanicAudioManager::StartCrowdRoarLayer()
 		if (bRoar3Enabled) { PlayRoarSound(CrowdRoar3, Roar3Volume, TEXT("CrowdRoar3")); }
 		break;
 	}
+
+	SchedulePanicRoarFadeOut();
 }
 
 void AOBPanicAudioManager::StopCrowdRoarLayer()
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(RoarAutoFadeOutTimerHandle);
+		World->GetTimerManager().ClearTimer(RoarAutoFadeOutCleanupTimerHandle);
+	}
+
 	bRoarLayerActive = false;
 	for (UAudioComponent* Component : ActiveRoarComponents)
 	{
 		FadeOutReusableLayer(Component, RoarFadeOut);
+	}
+}
+
+void AOBPanicAudioManager::RestartCrowdRoarLayer()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(RoarStartTimerHandle);
+	}
+
+	StartCrowdRoarLayer();
+}
+
+void AOBPanicAudioManager::StopRoarComponentsImmediately()
+{
+	for (UAudioComponent* Component : ActiveRoarComponents)
+	{
+		if (Component && Component->IsPlaying())
+		{
+			Component->Stop();
+		}
+	}
+
+	ActiveRoarComponents.Reset();
+}
+
+void AOBPanicAudioManager::SchedulePanicRoarFadeOut()
+{
+	if (ActiveRoarComponents.Num() == 0)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const float Delay = FMath::Max(PanicRoarFadeOutDelay, 0.0f);
+	if (Delay <= 0.0f)
+	{
+		BeginPanicRoarFadeOut();
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(RoarAutoFadeOutTimerHandle, this, &AOBPanicAudioManager::BeginPanicRoarFadeOut, Delay, false);
+}
+
+void AOBPanicAudioManager::BeginPanicRoarFadeOut()
+{
+	if (!bRoarLayerActive)
+	{
+		return;
+	}
+
+	bRoarLayerActive = false;
+
+	const float FadeDuration = FMath::Max(PanicRoarFadeOutDuration, 0.0f);
+	const float TargetVolume = FMath::Max(PanicRoarEndVolume, 0.0f);
+	for (UAudioComponent* Component : ActiveRoarComponents)
+	{
+		if (!Component || !Component->IsPlaying())
+		{
+			continue;
+		}
+
+		Component->bAutoDestroy = false;
+		if (TargetVolume <= KINDA_SMALL_NUMBER)
+		{
+			Component->FadeOut(FadeDuration, 0.0f, PanicRoarFadeOutCurve);
+		}
+		else
+		{
+			Component->AdjustVolume(FadeDuration, TargetVolume, PanicRoarFadeOutCurve);
+		}
+	}
+
+	if (TargetVolume <= KINDA_SMALL_NUMBER)
+	{
+		if (FadeDuration <= 0.0f)
+		{
+			CleanupStoppedRoarComponents();
+		}
+		else if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimer(RoarAutoFadeOutCleanupTimerHandle, this, &AOBPanicAudioManager::CleanupStoppedRoarComponents, FadeDuration, false);
+		}
+	}
+}
+
+void AOBPanicAudioManager::CleanupStoppedRoarComponents()
+{
+	for (int32 Index = ActiveRoarComponents.Num() - 1; Index >= 0; --Index)
+	{
+		UAudioComponent* Component = ActiveRoarComponents[Index].Get();
+		if (!Component || !Component->IsPlaying())
+		{
+			ActiveRoarComponents.RemoveAtSwap(Index);
+		}
 	}
 }
 
@@ -455,7 +577,7 @@ void AOBPanicAudioManager::StopCrowdFootstepsLayer()
 	bFootstepsLayerActive = false;
 	for (UAudioComponent* Component : ActiveFootstepComponents)
 	{
-		FadeOutReusableLayer(Component, FootstepsFadeOut);
+		FadeOutReusableLayer(Component, FootstepsFadeOutDuration);
 	}
 }
 
@@ -488,7 +610,7 @@ void AOBPanicAudioManager::KeepLoopLayersAlive()
 	{
 		HeartbeatComponent->SetSound(HeartbeatSound);
 		HeartbeatComponent->SoundClassOverride = PanicSFXSoundClass;
-		HeartbeatComponent->FadeIn(FMath::Max(HeartbeatFadeIn, 0.0f), FMath::Max(HeartbeatVolume, 0.0f));
+		HeartbeatComponent->FadeIn(FMath::Max(HeartbeatFadeInDuration, 0.0f), FMath::Max(HeartbeatVolume, 0.0f));
 	}
 
 	if (bPanicAudioActive && LowDroneComponent && LowDroneSound && !LowDroneComponent->IsPlaying())
@@ -510,7 +632,7 @@ void AOBPanicAudioManager::KeepLoopLayersAlive()
 	{
 		if (bPanicAudioActive && bFootstepsLayerActive && Component && Component->Sound && !Component->IsPlaying())
 		{
-			Component->FadeIn(FMath::Max(FootstepsFadeIn, 0.0f), FMath::Max(Component->VolumeMultiplier, 0.0f));
+			Component->FadeIn(FMath::Max(FootstepsFadeInDuration, 0.0f), FMath::Max(Component->VolumeMultiplier, 0.0f));
 		}
 	}
 }
@@ -566,41 +688,38 @@ void AOBPanicAudioManager::PlayAmbientSound(USoundBase* Sound, float Volume, con
 
 void AOBPanicAudioManager::PlayRoarSound(USoundBase* Sound, float Volume, const TCHAR* DebugName)
 {
-	if (!IsLayerVolumeAudible(DebugName, Volume))
+	const float StartVolume = FMath::Max(Volume, 0.0f) * FMath::Max(PanicRoarVolume, 0.0f);
+	if (!IsLayerVolumeAudible(DebugName, StartVolume))
 	{
 		return;
 	}
 
-	if (FadeInExistingLayer(FindReusableLayerComponent(ActiveRoarComponents, Sound), Sound, Volume, RoarFadeIn, TEXT("Roar"), PanicSFXSoundClass))
-	{
-		return;
-	}
-
-	if (UAudioComponent* Component = CreateAudioLayer(Sound, Volume, 1.0f, DebugName, PanicSFXSoundClass))
+	if (UAudioComponent* Component = CreateAudioLayer(Sound, StartVolume, 1.0f, DebugName, PanicSFXSoundClass))
 	{
 		ActiveRoarComponents.Add(Component);
-		LogAudioLayerStarted(TEXT("Roar"), Sound, Volume);
-		Component->FadeIn(FMath::Max(RoarFadeIn, 0.0f), FMath::Max(Volume, 0.0f));
+		LogAudioLayerStarted(TEXT("Roar"), Sound, StartVolume);
+		Component->FadeIn(0.0f, StartVolume);
 	}
 }
 
 void AOBPanicAudioManager::PlayFootstepSound(USoundBase* Sound, float Volume, const TCHAR* DebugName)
 {
-	if (!IsLayerVolumeAudible(DebugName, Volume))
+	const float StartVolume = FMath::Max(Volume, 0.0f) * FMath::Max(PanicFootstepsVolume, 0.0f);
+	if (!IsLayerVolumeAudible(DebugName, StartVolume))
 	{
 		return;
 	}
 
-	if (FadeInExistingLayer(FindReusableLayerComponent(ActiveFootstepComponents, Sound), Sound, Volume, FootstepsFadeIn, TEXT("Footsteps"), PanicSFXSoundClass))
+	if (FadeInExistingLayer(FindReusableLayerComponent(ActiveFootstepComponents, Sound), Sound, StartVolume, FootstepsFadeInDuration, TEXT("Footsteps"), PanicSFXSoundClass))
 	{
 		return;
 	}
 
-	if (UAudioComponent* Component = CreateAudioLayer(Sound, Volume, 1.0f, DebugName, PanicSFXSoundClass))
+	if (UAudioComponent* Component = CreateAudioLayer(Sound, StartVolume, 1.0f, DebugName, PanicSFXSoundClass))
 	{
 		ActiveFootstepComponents.Add(Component);
-		LogAudioLayerStarted(TEXT("Footsteps"), Sound, Volume);
-		Component->FadeIn(FMath::Max(FootstepsFadeIn, 0.0f), FMath::Max(Volume, 0.0f));
+		LogAudioLayerStarted(TEXT("Footsteps"), Sound, StartVolume);
+		Component->FadeIn(FMath::Max(FootstepsFadeInDuration, 0.0f), StartVolume);
 	}
 }
 
