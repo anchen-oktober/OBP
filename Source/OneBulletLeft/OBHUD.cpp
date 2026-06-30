@@ -71,6 +71,22 @@ void AOBHUD::ShowMouseSensitivityChanged(float NewSensitivity)
 		: 0.0f;
 }
 
+void AOBHUD::ShowImmortalModeMsg()
+{
+	if (HUDWidget)
+	{
+		HUDWidget->ShowImmortalModeMsg();
+	}
+}
+
+void AOBHUD::HideImmortalModeMsg()
+{
+	if (HUDWidget)
+	{
+		HUDWidget->HideImmortalModeMsg();
+	}
+}
+
 void AOBHUD::ToggleMouseSensitivityPanel()
 {
 	SetMouseSensitivityPanelVisible(!bDrawMouseSensitivityPanel);

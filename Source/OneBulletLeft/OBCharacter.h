@@ -392,6 +392,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void DieWithReason(const FText& DeathReason);
 
+	void ShowImmortalModeMsgForThreat(AActor* ThreatSource);
+	void HideImmortalModeMsgForThreat(AActor* ThreatSource);
+
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
 	void OnPlayerShoot(const FVector& TraceStart, const FVector& TraceEnd, const FVector& ImpactLocation, bool bHitSomething, bool bHitEnemy);
 
@@ -456,6 +459,7 @@ protected:
 	bool bKickFOVReturning = false;
 	bool bKickDashing = false;
 	bool bKickWeaponSwayActive = false;
+	TSet<TWeakObjectPtr<AActor>> ActiveImmortalModeThreatSources;
 
 	FVector ActiveDodgeDirection = FVector::ZeroVector;
 	FVector ActiveKickDashDirection = FVector::ZeroVector;
@@ -489,8 +493,8 @@ protected:
 	void LookPitch(float Value);
 	void IncreaseMouseSensitivity();
 	void DecreaseMouseSensitivity();
+	void ToggleMouseSensitivityUI();
 	void RestartLevel();
-	void ToggleEnemyDetectionRadiusVisualization();
 	void ResetKick();
 	void ApplyKickImpact();
 	void FinishKickRecovery();

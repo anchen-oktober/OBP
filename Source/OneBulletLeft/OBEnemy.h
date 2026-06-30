@@ -54,10 +54,6 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 
-	static bool IsDetectionRadiusVisualizationEnabled();
-	static void SetDetectionRadiusVisualizationEnabled(bool bEnabled);
-	static void ToggleDetectionRadiusVisualization();
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings")
 	EOBEnemyType EnemyType = EOBEnemyType::Fast;
 
@@ -274,6 +270,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Attack Radius")
 	float TouchKillExtraMargin = 12.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Attack Radius", meta=(ClampMin="0.0", UIMin="90.0", UIMax="120.0"))
+	float MaxAttackHeightDifference = 110.0f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Attack Radius")
 	TObjectPtr<UDecalComponent> HeavyAttackAura;
 
@@ -461,6 +460,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Attack Radius")
 	float GetEffectiveAttackRadius() const;
 
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Attack Radius")
+	bool CanDamagePlayerByHeight(AActor* PlayerActor) const;
+
 	AOBBulletPickup* GetDroppedBulletPickup() const { return DroppedBulletPickup; }
 
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
@@ -535,6 +537,7 @@ protected:
 	float ActiveKickKnockbackPreviousAlpha = 0.0f;
 	float ActiveLocomotionPlayRate = -1.0f;
 	UAnimationAsset* ActiveLocomotionAnimation = nullptr;
+	bool bPlayerWasInLethalTouchRange = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> HeavyAttackAuraMaterial;
@@ -607,7 +610,7 @@ protected:
 	void UpdateLocomotionState(float DeltaSeconds);
 	void UpdateSimpleLocomotionAnimation();
 	FVector CalculateApproachTarget() const;
-	void DrawDetectionRadiusDebug() const;
 	void RefreshHeavyAttackAura();
+	void ClearPlayerLethalTouchThreat();
 	void TryTouchKill();
 };

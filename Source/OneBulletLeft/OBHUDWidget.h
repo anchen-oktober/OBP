@@ -8,6 +8,7 @@
 
 class UTextBlock;
 class USlider;
+class UWidget;
 
 UCLASS(Blueprintable, PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API UOBHUDWidget : public UUserWidget
@@ -76,6 +77,9 @@ public:
 
 	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Waves")
 	TObjectPtr<UTextBlock> EnemiesLeftTxt;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Text")
+	TObjectPtr<UWidget> ImmortalModeMsg;
 
 	UPROPERTY(BlueprintReadOnly, Category="OneBulletSettings|HUD|Waves")
 	EOBWaveState CurrentWaveState = EOBWaveState::Waiting;
@@ -152,6 +156,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD|Waves")
 	void RefreshFromWaveManager();
 
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD")
+	void ShowImmortalModeMsg();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD")
+	void HideImmortalModeMsg();
+
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|HUD")
 	void OnHudInitialized();
 
@@ -191,6 +201,7 @@ private:
 	FText PendingWaveMessage = FText::GetEmpty();
 	bool bHasPendingWaveMessage = false;
 	bool bUpdatingMouseSensitivitySlider = false;
+	FTimerHandle ImmortalModeMsgTimerHandle;
 
 	void TryBindWaveManager();
 	void UnbindWaveManager();

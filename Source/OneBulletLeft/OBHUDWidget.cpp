@@ -2,6 +2,8 @@
 
 #include "Components/Slider.h"
 #include "Components/TextBlock.h"
+#include "Components/Widget.h"
+#include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "OBCharacter.h"
 
@@ -11,6 +13,8 @@ void UOBHUDWidget::NativeConstruct()
 	RefreshFromGameState();
 	OnHudInitialized();
 	ApplyHudTextColors();
+
+	HideImmortalModeMsg();
 
 	if (WaveTxt)
 	{
@@ -41,6 +45,10 @@ void UOBHUDWidget::NativeDestruct()
 		MouseSensitivitySlider->OnValueChanged.RemoveDynamic(this, &UOBHUDWidget::HandleMouseSensitivitySliderChanged);
 	}
 	UnbindWaveManager();
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ImmortalModeMsgTimerHandle);
+	}
 	Super::NativeDestruct();
 }
 
@@ -222,6 +230,40 @@ void UOBHUDWidget::HandleMouseSensitivitySliderChanged(float NewValue)
 	}
 
 	SetMouseSensitivityNormalized(NewValue);
+}
+
+void UOBHUDWidget::ShowImmortalModeMsg()
+{
+	if (!ImmortalModeMsg)
+	{
+		return;
+	}
+
+	ImmortalModeMsg->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ImmortalModeMsgTimerHandle);
+		World->GetTimerManager().SetTimer(
+			ImmortalModeMsgTimerHandle,
+			this,
+			&UOBHUDWidget::HideImmortalModeMsg,
+			3.0f,
+			false);
+	}
+}
+
+void UOBHUDWidget::HideImmortalModeMsg()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ImmortalModeMsgTimerHandle);
+	}
+
+	if (ImmortalModeMsg)
+	{
+		ImmortalModeMsg->SetVisibility(ESlateVisibility::Collapsed);
+	}
 }
 
 void UOBHUDWidget::RefreshFromWaveManager()

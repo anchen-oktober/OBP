@@ -180,7 +180,7 @@ void AOBCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	}
 	PlayerInputComponent->BindKey(EKeys::One, IE_Pressed, this, &AOBCharacter::ToggleViewMode);
 	PlayerInputComponent->BindKey(EKeys::Two, IE_Pressed, this, &AOBCharacter::ToggleImmortalMode);
-	PlayerInputComponent->BindKey(EKeys::Three, IE_Pressed, this, &AOBCharacter::ToggleEnemyDetectionRadiusVisualization);
+	PlayerInputComponent->BindKey(EKeys::Three, IE_Pressed, this, &AOBCharacter::ToggleMouseSensitivityUI);
 	PlayerInputComponent->BindKey(EKeys::LeftBracket, IE_Pressed, this, &AOBCharacter::DecreaseMouseSensitivity);
 	PlayerInputComponent->BindKey(EKeys::RightBracket, IE_Pressed, this, &AOBCharacter::IncreaseMouseSensitivity);
 }
@@ -277,6 +277,17 @@ void AOBCharacter::IncreaseMouseSensitivity()
 void AOBCharacter::DecreaseMouseSensitivity()
 {
 	AdjustMouseSensitivity(-FMath::Max(MouseSensitivityStep, 0.01f));
+}
+
+void AOBCharacter::ToggleMouseSensitivityUI()
+{
+	if (const APlayerController* PlayerController = Cast<APlayerController>(Controller))
+	{
+		if (AOBHUD* OneBulletHUD = Cast<AOBHUD>(PlayerController->GetHUD()))
+		{
+			OneBulletHUD->ToggleMouseSensitivityPanel();
+		}
+	}
 }
 
 void AOBCharacter::Shoot()
@@ -520,12 +531,18 @@ void AOBCharacter::SetCameraWeaponRelativeTransform(const FTransform& NewTransfo
 void AOBCharacter::ToggleImmortalMode()
 {
 	bImmortalMode = !bImmortalMode;
+	if (!bImmortalMode)
+	{
+		ActiveImmortalModeThreatSources.Empty();
+		if (const APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+		{
+			if (AOBHUD* OneBulletHUD = Cast<AOBHUD>(PlayerController->GetHUD()))
+			{
+				OneBulletHUD->HideImmortalModeMsg();
+			}
+		}
+	}
 	OnPlayerImmortalModeChanged(bImmortalMode);
-}
-
-void AOBCharacter::ToggleEnemyDetectionRadiusVisualization()
-{
-	AOBEnemy::ToggleDetectionRadiusVisualization();
 }
 
 void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& SpawnRotation)
@@ -539,6 +556,7 @@ void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& 
 	bKickFOVReturning = false;
 	bKickDashing = false;
 	bKickWeaponSwayActive = false;
+	ActiveImmortalModeThreatSources.Empty();
 	ActiveDodgeDirection = FVector::ZeroVector;
 	ActiveKickDashDirection = FVector::ZeroVector;
 	ActiveDodgeElapsed = 0.0f;
@@ -552,6 +570,13 @@ void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& 
 	if (AOBGameMode* OneBulletMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOBGameMode>() : nullptr)
 	{
 		OneBulletMode->StopPanicAudio(nullptr, false);
+	}
+	if (const APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+	{
+		if (AOBHUD* OneBulletHUD = Cast<AOBHUD>(PlayerController->GetHUD()))
+		{
+			OneBulletHUD->HideImmortalModeMsg();
+		}
 	}
 
 	GetWorldTimerManager().ClearTimer(KickCooldownTimerHandle);
@@ -579,12 +604,25 @@ void AOBCharacter::Die()
 
 void AOBCharacter::DieWithReason(const FText& DeathReason)
 {
-	if (bDead || bImmortalMode)
+	if (bDead)
 	{
 		return;
 	}
 
+	if (bImmortalMode)
+	{
+		if (const APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+		{
+			if (AOBHUD* OneBulletHUD = Cast<AOBHUD>(PlayerController->GetHUD()))
+			{
+				OneBulletHUD->ShowImmortalModeMsg();
+			}
+		}
+		return;
+	}
+
 	bDead = true;
+	ActiveImmortalModeThreatSources.Empty();
 	bKickRecovering = false;
 	bKickDashing = false;
 	bKickWeaponSwayActive = false;
@@ -606,6 +644,60 @@ void AOBCharacter::DieWithReason(const FText& DeathReason)
 	if (AOBGameState* OneBulletState = GetWorld()->GetGameState<AOBGameState>())
 	{
 		OneBulletState->SetGameOverWithReason(true, DeathReason);
+	}
+}
+
+void AOBCharacter::ShowImmortalModeMsgForThreat(AActor* ThreatSource)
+{
+	if (bDead || !bImmortalMode)
+	{
+		return;
+	}
+
+	if (ThreatSource)
+	{
+		ActiveImmortalModeThreatSources.Add(ThreatSource);
+	}
+
+	if (const APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+	{
+		if (AOBHUD* OneBulletHUD = Cast<AOBHUD>(PlayerController->GetHUD()))
+		{
+			OneBulletHUD->ShowImmortalModeMsg();
+		}
+	}
+}
+
+void AOBCharacter::HideImmortalModeMsgForThreat(AActor* ThreatSource)
+{
+	if (ThreatSource)
+	{
+		ActiveImmortalModeThreatSources.Remove(ThreatSource);
+	}
+	else
+	{
+		ActiveImmortalModeThreatSources.Empty();
+	}
+
+	for (auto It = ActiveImmortalModeThreatSources.CreateIterator(); It; ++It)
+	{
+		if (!It->IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+
+	if (!ActiveImmortalModeThreatSources.IsEmpty())
+	{
+		return;
+	}
+
+	if (const APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+	{
+		if (AOBHUD* OneBulletHUD = Cast<AOBHUD>(PlayerController->GetHUD()))
+		{
+			OneBulletHUD->HideImmortalModeMsg();
+		}
 	}
 }
 

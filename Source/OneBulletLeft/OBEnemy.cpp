@@ -34,9 +34,6 @@ bool IsAnimationCompatibleWithMesh(const UAnimationAsset* Animation, const USkel
 	return !Animation || !SkeletalMesh || !Animation->GetSkeleton() || Animation->GetSkeleton() == SkeletalMesh->GetSkeleton();
 }
 
-bool bShowEnemyDetectionRadii = false;
-TWeakObjectPtr<UWorld> DetectionVisualizationWorld;
-
 TAutoConsoleVariable<int32> CVarHeavyAttackRadiusIndicator(
 	TEXT("onebullet.HeavyAttackRadius"),
 	1,
@@ -105,12 +102,6 @@ void AOBEnemy::BeginPlay()
 	{
 		SpawnDefaultController();
 	}
-	UWorld* World = GetWorld();
-	if (World && DetectionVisualizationWorld.Get() != World)
-	{
-		DetectionVisualizationWorld = World;
-		bShowEnemyDetectionRadii = false;
-	}
 	NormalizePressureSettings();
 	Configure(EnemyType);
 	GetCharacterMovement()->bOrientRotationToMovement = true;
@@ -125,21 +116,6 @@ void AOBEnemy::BeginPlay()
 	RepathTimeJitter = FMath::FRandRange(0.90f, 1.10f);
 	SetAIState(bWasHoldingBullet ? EOBEnemyAIState::Cautious : EOBEnemyAIState::Rush, true);
 	ScheduleNextMoveRequest(FMath::FRandRange(0.05f, 0.25f));
-}
-
-bool AOBEnemy::IsDetectionRadiusVisualizationEnabled()
-{
-	return bShowEnemyDetectionRadii;
-}
-
-void AOBEnemy::SetDetectionRadiusVisualizationEnabled(bool bEnabled)
-{
-	bShowEnemyDetectionRadii = bEnabled;
-}
-
-void AOBEnemy::ToggleDetectionRadiusVisualization()
-{
-	bShowEnemyDetectionRadii = !bShowEnemyDetectionRadii;
 }
 
 void AOBEnemy::Tick(float DeltaSeconds)
@@ -202,7 +178,6 @@ void AOBEnemy::Tick(float DeltaSeconds)
 	UpdateSimpleLocomotionAnimation();
 	TryTouchKill();
 	RefreshHeavyAttackAura();
-	DrawDetectionRadiusDebug();
 	DrawAIRoleTargetDebug();
 }
 
@@ -241,6 +216,7 @@ void AOBEnemy::KillAndDropBullet(const FVector& DropLocation)
 	}
 
 	bDead = true;
+	ClearPlayerLethalTouchThreat();
 	RefreshHeavyAttackAura();
 	OnDeathReported.Broadcast(this);
 	GetWorldTimerManager().ClearTimer(MoveTimerHandle);
@@ -688,6 +664,7 @@ void AOBEnemy::NormalizePressureSettings()
 	PatrolObstacleProbeRadius = FMath::Max(PatrolObstacleProbeRadius, 0.0f);
 	FastAttackRadius = FMath::Max(FastAttackRadius, 0.0f);
 	HeavyAttackRadius = FMath::Max(HeavyAttackRadius, FastAttackRadius);
+	MaxAttackHeightDifference = FMath::Max(MaxAttackHeightDifference, 0.0f);
 	HeavyAttackAuraOpacity = FMath::Clamp(HeavyAttackAuraOpacity, 0.0f, 0.15f);
 	HeavyAttackAuraReadyOpacity = FMath::Clamp(HeavyAttackAuraReadyOpacity, HeavyAttackAuraOpacity, 0.20f);
 
@@ -2105,21 +2082,6 @@ FVector AOBEnemy::CalculateApproachTarget() const
 	return ApproachTarget;
 }
 
-void AOBEnemy::DrawDetectionRadiusDebug() const
-{
-	if (!bShowEnemyDetectionRadii || bDead || DetectionRadius <= 0.0f || !GetWorld())
-	{
-		return;
-	}
-
-	const FVector Center = GetActorLocation() + FVector(0.0f, 0.0f, 8.0f);
-	const FColor RadiusColor = EnemyType == EOBEnemyType::Heavy
-		? FColor(255, 96, 64)
-		: FColor(64, 180, 255);
-	DrawDebugCircle(GetWorld(), Center, DetectionRadius, 96, RadiusColor, false, 0.0f, 0, 3.0f, FVector::ForwardVector, FVector::RightVector, false);
-	DrawDebugPoint(GetWorld(), Center, 9.0f, RadiusColor, false, 0.0f, 0);
-}
-
 float AOBEnemy::GetEffectiveAttackRadius() const
 {
 	const UCapsuleComponent* EnemyCapsule = GetCapsuleComponent();
@@ -2130,6 +2092,23 @@ float AOBEnemy::GetEffectiveAttackRadius() const
 		? HeavyAttackRadius
 		: FastAttackRadius;
 	return FMath::Max(ConfiguredRadius, EnemyRadius + PlayerRadius + TouchKillExtraMargin);
+}
+
+bool AOBEnemy::CanDamagePlayerByHeight(AActor* PlayerActor) const
+{
+	if (!IsValid(PlayerActor))
+	{
+		return false;
+	}
+
+	const float HeightDelta = FMath::Abs(PlayerActor->GetActorLocation().Z - GetActorLocation().Z);
+	if (HeightDelta > MaxAttackHeightDifference)
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("Enemy attack ignored: player is too high. HeightDelta=%f"), HeightDelta);
+		return false;
+	}
+
+	return true;
 }
 
 void AOBEnemy::RefreshHeavyAttackAura()
@@ -2230,14 +2209,25 @@ void AOBEnemy::DrawAIRoleTargetDebug() const
 		1.0f);
 }
 
+void AOBEnemy::ClearPlayerLethalTouchThreat()
+{
+	if (bPlayerWasInLethalTouchRange && PlayerTarget)
+	{
+		PlayerTarget->HideImmortalModeMsgForThreat(this);
+	}
+	bPlayerWasInLethalTouchRange = false;
+}
+
 void AOBEnemy::TryTouchKill()
 {
 	if (bDead || bSpawnProtected || bBulletPickupReactionPaused || bKickKnockbackActive || !PlayerTarget || PlayerTarget->IsDead())
 	{
+		ClearPlayerLethalTouchThreat();
 		return;
 	}
 	if (!IsPlayerDetected())
 	{
+		ClearPlayerLethalTouchThreat();
 		return;
 	}
 
@@ -2254,14 +2244,31 @@ void AOBEnemy::TryTouchKill()
 		const FVector ToEnemy = (GetActorLocation() - PlayerTarget->GetActorLocation()).GetSafeNormal2D();
 		if (!ToEnemy.IsNearlyZero() && FVector::DotProduct(PlayerForward, ToEnemy) < TouchKillFrontMinDot)
 		{
+			ClearPlayerLethalTouchThreat();
 			return;
 		}
 	}
 
-	if (FVector::DistSquared2D(GetActorLocation(), PlayerTarget->GetActorLocation()) <= FMath::Square(EffectiveAttackRadius))
+	if (FVector::DistSquared2D(GetActorLocation(), PlayerTarget->GetActorLocation()) > FMath::Square(EffectiveAttackRadius))
 	{
-		PlayerTarget->DieWithReason(EnemyType == EOBEnemyType::Heavy
-			? FText::FromString(TEXT("Crushed by Heavy"))
-			: FText::FromString(TEXT("Caught by Fast")));
+		ClearPlayerLethalTouchThreat();
+		return;
 	}
+
+	if (!CanDamagePlayerByHeight(PlayerTarget))
+	{
+		ClearPlayerLethalTouchThreat();
+		return;
+	}
+
+	bPlayerWasInLethalTouchRange = true;
+	if (PlayerTarget->IsImmortalMode())
+	{
+		PlayerTarget->ShowImmortalModeMsgForThreat(this);
+		return;
+	}
+
+	PlayerTarget->DieWithReason(EnemyType == EOBEnemyType::Heavy
+		? FText::FromString(TEXT("Crushed by Heavy"))
+		: FText::FromString(TEXT("Caught by Fast")));
 }

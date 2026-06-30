@@ -24,6 +24,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD|Settings")
 	void SetMouseSensitivityPanelVisible(bool bVisible);
 
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD")
+	void ShowImmortalModeMsg();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD")
+	void HideImmortalModeMsg();
+
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|HUD|Settings")
 	bool IsMouseSensitivityPanelVisible() const { return bDrawMouseSensitivityPanel; }
 
