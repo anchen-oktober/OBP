@@ -18,6 +18,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD|Settings")
 	void ShowMouseSensitivityChanged(float NewSensitivity);
 
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD|Settings")
+	void ToggleMouseSensitivityPanel();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|HUD|Settings")
+	void SetMouseSensitivityPanelVisible(bool bVisible);
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|HUD|Settings")
+	bool IsMouseSensitivityPanelVisible() const { return bDrawMouseSensitivityPanel; }
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="OneBulletSettings|HUD")
 	TSubclassOf<UOBHUDWidget> HUDWidgetClass;
 
@@ -45,7 +54,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|HUD|Settings")
 	FLinearColor MouseSensitivityTextColor = FLinearColor(0.86f, 0.96f, 1.0f, 1.0f);
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|HUD|Settings")
+	bool bDrawMouseSensitivityPanel = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|HUD|Settings")
+	FLinearColor MouseSensitivityPanelColor = FLinearColor(0.02f, 0.03f, 0.035f, 0.58f);
+
 private:
 	float DisplayedMouseSensitivity = 1.0f;
 	float MouseSensitivityDisplayEndTime = 0.0f;
+
+	void DrawMouseSensitivityPanel();
 };

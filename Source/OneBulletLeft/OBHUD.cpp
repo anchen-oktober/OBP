@@ -4,6 +4,8 @@
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
+#include "GameFramework/PlayerController.h"
+#include "OBCharacter.h"
 #include "OBHUDWidget.h"
 
 void AOBHUD::BeginPlay()
@@ -43,7 +45,12 @@ void AOBHUD::DrawHUD()
 		DrawRect(DrawColor, Center.X - Thickness * 0.5f, Center.Y + Gap, Thickness, ArmLength);
 	}
 
-	if (GetWorld() && GetWorld()->GetTimeSeconds() < MouseSensitivityDisplayEndTime)
+	if (bDrawMouseSensitivityPanel)
+	{
+		DrawMouseSensitivityPanel();
+	}
+
+	if (bDrawMouseSensitivityPanel && GetWorld() && GetWorld()->GetTimeSeconds() < MouseSensitivityDisplayEndTime)
 	{
 		const FColor TextColor = MouseSensitivityTextColor.ToFColor(true);
 		const FString Message = FString::Printf(TEXT("Mouse Sensitivity: %.2fx"), DisplayedMouseSensitivity);
@@ -62,4 +69,49 @@ void AOBHUD::ShowMouseSensitivityChanged(float NewSensitivity)
 	MouseSensitivityDisplayEndTime = GetWorld()
 		? GetWorld()->GetTimeSeconds() + FMath::Max(MouseSensitivityDisplayDuration, 0.1f)
 		: 0.0f;
+}
+
+void AOBHUD::ToggleMouseSensitivityPanel()
+{
+	SetMouseSensitivityPanelVisible(!bDrawMouseSensitivityPanel);
+}
+
+void AOBHUD::SetMouseSensitivityPanelVisible(bool bVisible)
+{
+	bDrawMouseSensitivityPanel = bVisible;
+	if (!bDrawMouseSensitivityPanel)
+	{
+		MouseSensitivityDisplayEndTime = 0.0f;
+	}
+}
+
+void AOBHUD::DrawMouseSensitivityPanel()
+{
+	const APlayerController* PlayerController = GetOwningPlayerController();
+	const AOBCharacter* PlayerCharacter = PlayerController ? Cast<AOBCharacter>(PlayerController->GetPawn()) : nullptr;
+	if (!Canvas || !PlayerCharacter)
+	{
+		return;
+	}
+
+	const float Sensitivity = PlayerCharacter->GetMouseSensitivity();
+	const float NormalizedSensitivity = PlayerCharacter->GetMouseSensitivityNormalized();
+	const FString Label = FString::Printf(TEXT("Mouse sensitivity  [ / ]  %.2fx"), Sensitivity);
+	constexpr float Padding = 10.0f;
+	constexpr float TextScale = 0.9f;
+	constexpr float PanelWidth = 290.0f;
+	constexpr float PanelHeight = 50.0f;
+	constexpr float BarHeight = 5.0f;
+	const float X = 24.0f;
+	const float Y = FMath::Max(20.0f, Canvas->ClipY - PanelHeight - 24.0f);
+	UFont* Font = GEngine ? GEngine->GetSmallFont() : nullptr;
+
+	DrawRect(MouseSensitivityPanelColor.ToFColor(true), X, Y, PanelWidth, PanelHeight);
+	DrawText(Label, MouseSensitivityTextColor.ToFColor(true), X + Padding, Y + 8.0f, Font, TextScale, false);
+
+	const float BarX = X + Padding;
+	const float BarY = Y + PanelHeight - Padding - BarHeight;
+	const float BarWidth = PanelWidth - Padding * 2.0f;
+	DrawRect(FLinearColor(0.20f, 0.22f, 0.24f, 0.85f).ToFColor(true), BarX, BarY, BarWidth, BarHeight);
+	DrawRect(MouseSensitivityTextColor.ToFColor(true), BarX, BarY, BarWidth * NormalizedSensitivity, BarHeight);
 }
