@@ -9,6 +9,8 @@
 class UTextBlock;
 class USlider;
 class UWidget;
+class UButton;
+class UCanvasPanel;
 
 UCLASS(Blueprintable, PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API UOBHUDWidget : public UUserWidget
@@ -57,7 +59,16 @@ public:
 	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Text")
 	TObjectPtr<UTextBlock> KillCountText;
 
-	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Settings")
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidget), Category="OneBulletSettings|HUD|StartMenu")
+	TObjectPtr<UButton> PlayBtn;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidget), Category="OneBulletSettings|HUD|StartMenu")
+	TObjectPtr<UButton> SettingsBtn;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidget), Category="OneBulletSettings|HUD|StartMenu")
+	TObjectPtr<UCanvasPanel> SettingsWidget;
+
+	UPROPERTY(Transient)
 	TObjectPtr<USlider> MouseSensitivitySlider;
 
 	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional), Category="OneBulletSettings|HUD|Settings")
@@ -213,9 +224,19 @@ private:
 	void UpdateCountdown(float DeltaTime);
 	void ApplyHudTextColors();
 	void RefreshMouseSensitivityControls();
+	void InitializeStartMenu();
+	void ApplyMenuInputMode();
+	void ApplyGameInputMode();
+	void EnsureMouseSensitivitySlider();
 
 	UFUNCTION()
 	void HandleMouseSensitivitySliderChanged(float NewValue);
+
+	UFUNCTION()
+	void HandlePlayClicked();
+
+	UFUNCTION()
+	void HandleSettingsClicked();
 
 	UFUNCTION()
 	void HandleWaveStateChanged(EOBWaveState NewState, EOBWaveState PreviousState);

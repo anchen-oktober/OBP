@@ -1,8 +1,13 @@
 #include "OBHUDWidget.h"
 
+#include "Blueprint/WidgetTree.h"
+#include "Components/Button.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Components/Slider.h"
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
+#include "GameFramework/PlayerController.h"
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "OBCharacter.h"
@@ -29,17 +34,20 @@ void UOBHUDWidget::NativeConstruct()
 
 	TryBindWaveManager();
 	RefreshFromWaveManager();
-	if (MouseSensitivitySlider)
-	{
-		MouseSensitivitySlider->SetMinValue(0.0f);
-		MouseSensitivitySlider->SetMaxValue(1.0f);
-		MouseSensitivitySlider->OnValueChanged.AddUniqueDynamic(this, &UOBHUDWidget::HandleMouseSensitivitySliderChanged);
-	}
+	InitializeStartMenu();
 	RefreshMouseSensitivityControls();
 }
 
 void UOBHUDWidget::NativeDestruct()
 {
+	if (PlayBtn)
+	{
+		PlayBtn->OnClicked.RemoveDynamic(this, &UOBHUDWidget::HandlePlayClicked);
+	}
+	if (SettingsBtn)
+	{
+		SettingsBtn->OnClicked.RemoveDynamic(this, &UOBHUDWidget::HandleSettingsClicked);
+	}
 	if (MouseSensitivitySlider)
 	{
 		MouseSensitivitySlider->OnValueChanged.RemoveDynamic(this, &UOBHUDWidget::HandleMouseSensitivitySliderChanged);
@@ -208,11 +216,19 @@ void UOBHUDWidget::ResetMouseSensitivity()
 
 void UOBHUDWidget::RefreshMouseSensitivityControls()
 {
-	const float NormalizedSensitivity = GetMouseSensitivityNormalized();
-	if (MouseSensitivitySlider && !bUpdatingMouseSensitivitySlider && !FMath::IsNearlyEqual(MouseSensitivitySlider->GetValue(), NormalizedSensitivity, 0.001f))
+	const AOBCharacter* Player = Cast<AOBCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0));
+	const float MinSensitivity = Player ? FMath::Max(Player->MinMouseSensitivity, 0.01f) : 0.1f;
+	const float MaxSensitivity = Player ? FMath::Max(Player->MaxMouseSensitivity, MinSensitivity) : 3.0f;
+	const float Sensitivity = Player ? Player->GetMouseSensitivity() : 1.0f;
+	if (MouseSensitivitySlider && !bUpdatingMouseSensitivitySlider)
 	{
 		bUpdatingMouseSensitivitySlider = true;
-		MouseSensitivitySlider->SetValue(NormalizedSensitivity);
+		MouseSensitivitySlider->SetMinValue(MinSensitivity);
+		MouseSensitivitySlider->SetMaxValue(MaxSensitivity);
+		if (!FMath::IsNearlyEqual(MouseSensitivitySlider->GetValue(), Sensitivity, 0.001f))
+		{
+			MouseSensitivitySlider->SetValue(Sensitivity);
+		}
 		bUpdatingMouseSensitivitySlider = false;
 	}
 
@@ -229,7 +245,117 @@ void UOBHUDWidget::HandleMouseSensitivitySliderChanged(float NewValue)
 		return;
 	}
 
-	SetMouseSensitivityNormalized(NewValue);
+	SetMouseSensitivity(NewValue);
+}
+
+void UOBHUDWidget::InitializeStartMenu()
+{
+	if (PlayBtn)
+	{
+		PlayBtn->SetVisibility(ESlateVisibility::Visible);
+		PlayBtn->OnClicked.AddUniqueDynamic(this, &UOBHUDWidget::HandlePlayClicked);
+	}
+
+	if (SettingsBtn)
+	{
+		SettingsBtn->SetVisibility(ESlateVisibility::Visible);
+		SettingsBtn->OnClicked.AddUniqueDynamic(this, &UOBHUDWidget::HandleSettingsClicked);
+	}
+
+	if (SettingsWidget)
+	{
+		SettingsWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	ApplyMenuInputMode();
+	UGameplayStatics::SetGamePaused(this, true);
+}
+
+void UOBHUDWidget::ApplyMenuInputMode()
+{
+	APlayerController* PlayerController = GetOwningPlayer();
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	FInputModeUIOnly InputMode;
+	InputMode.SetWidgetToFocus(TakeWidget());
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	PlayerController->SetInputMode(InputMode);
+	PlayerController->SetShowMouseCursor(true);
+	PlayerController->SetIgnoreMoveInput(true);
+	PlayerController->SetIgnoreLookInput(true);
+}
+
+void UOBHUDWidget::ApplyGameInputMode()
+{
+	APlayerController* PlayerController = GetOwningPlayer();
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	FInputModeGameOnly InputMode;
+	PlayerController->SetInputMode(InputMode);
+	PlayerController->SetShowMouseCursor(false);
+	PlayerController->ResetIgnoreMoveInput();
+	PlayerController->ResetIgnoreLookInput();
+}
+
+void UOBHUDWidget::EnsureMouseSensitivitySlider()
+{
+	if (MouseSensitivitySlider || !SettingsWidget || !WidgetTree)
+	{
+		return;
+	}
+
+	MouseSensitivitySlider = WidgetTree->ConstructWidget<USlider>(USlider::StaticClass(), TEXT("MouseSensitivitySlider"));
+	if (!MouseSensitivitySlider)
+	{
+		return;
+	}
+
+	if (UCanvasPanelSlot* SliderSlot = SettingsWidget->AddChildToCanvas(MouseSensitivitySlider))
+	{
+		SliderSlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
+		SliderSlot->SetOffsets(FMargin(0.0f));
+		SliderSlot->SetAlignment(FVector2D(0.0f, 0.0f));
+		SliderSlot->SetAutoSize(false);
+	}
+
+	MouseSensitivitySlider->SetRenderScale(FVector2D(1.0f, 1.0f));
+	MouseSensitivitySlider->OnValueChanged.AddUniqueDynamic(this, &UOBHUDWidget::HandleMouseSensitivitySliderChanged);
+	RefreshMouseSensitivityControls();
+}
+
+void UOBHUDWidget::HandlePlayClicked()
+{
+	if (PlayBtn)
+	{
+		PlayBtn->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (SettingsBtn)
+	{
+		SettingsBtn->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (SettingsWidget)
+	{
+		SettingsWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	UGameplayStatics::SetGamePaused(this, false);
+	ApplyGameInputMode();
+}
+
+void UOBHUDWidget::HandleSettingsClicked()
+{
+	if (SettingsWidget)
+	{
+		SettingsWidget->SetVisibility(ESlateVisibility::Visible);
+	}
+
+	EnsureMouseSensitivitySlider();
 }
 
 void UOBHUDWidget::ShowImmortalModeMsg()
