@@ -186,7 +186,7 @@ public:
 	float KickAttackCancelWindow = 0.20f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Debug")
-	bool bKickDebugDraw = true;
+	bool bKickDebugDraw = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel")
 	TSubclassOf<UCameraShakeBase> KickCameraShake;
