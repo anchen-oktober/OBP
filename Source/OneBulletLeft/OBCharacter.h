@@ -14,8 +14,18 @@ class USceneComponent;
 class USoundBase;
 class USkeletalMesh;
 class AOBBulletPickup;
+class AOBEnemy;
 
-UCLASS(PrioritizeCategories = "OneBulletSettings")
+UENUM(BlueprintType)
+enum class EOBKickResult : uint8
+{
+	BlockedByCooldown,
+	BlockedByDeath,
+	Miss,
+	Hit
+};
+
+UCLASS(Config=Game, PrioritizeCategories = "OneBulletSettings")
 class ONEBULLETLEFT_API AOBCharacter : public ACharacter
 {
 	GENERATED_BODY()
@@ -61,6 +71,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Modes")
 	bool bStartImmortal = false;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category="OneBulletSettings|Performance Debug")
+	bool bPerformanceDebugEnabled = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category="OneBulletSettings|Performance Debug", meta=(ClampMin="0.1", UIMin="0.25", UIMax="5.0"))
+	float PerformanceDebugLogInterval = 1.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Shooting")
 	float ShootRange = 5000.0f;
 
@@ -85,11 +101,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Pickup|Feel")
 	float PickupStopDuration = 0.025f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick")
-	float KickRange = 260.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Gameplay")
+	float KickRange = 220.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick")
-	float KickRadius = 180.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Gameplay")
+	float KickRadius = 130.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.1", UIMin="1.7", UIMax="2.3"))
 	float KickPlayRate = 2.0f;
@@ -103,8 +119,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.01", UIMin="0.05", UIMax="0.14"))
 	float KickDashDuration = 0.06f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="500.0", UIMax="900.0"))
-	float KickKnockbackStrength = 720.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Gameplay", meta=(ClampMin="0.0", UIMin="500.0", UIMax="1100.0"))
+	float KickKnockbackStrength = 900.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="130.0", UIMax="190.0"))
 	float KickTraceDistance = 165.0f;
@@ -130,14 +146,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="1.0", ClampMax="180.0", UIMin="60.0", UIMax="90.0"))
 	float KickConeAngleDegrees = 80.0f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Gameplay", meta=(ClampMin="1.0", ClampMax="90.0", UIMin="35.0", UIMax="60.0"))
+	float KickHalfAngleDegrees = 60.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Gameplay", meta=(ClampMin="0.0", UIMin="60.0", UIMax="140.0"))
+	float KickEmergencyCloseRadius = 100.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="500.0", UIMax="900.0"))
 	float KickPushDistance = 760.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.01", UIMin="0.10", UIMax="0.35"))
 	float KickPushDuration = 0.22f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="0.2", UIMax="1.0"))
-	float KickStunDuration = 0.45f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Gameplay", meta=(ClampMin="0.0", UIMin="0.2", UIMax="1.0"))
+	float KickStunDuration = 0.55f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", ClampMax="1.0", UIMin="0.5", UIMax="0.7"))
 	float KickSlowMultiplier = 0.60f;
@@ -151,8 +173,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="0.0", UIMax="80.0"))
 	float KickPlayerLungeDistance = 35.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick")
-	float KickCooldown = 2.4f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Gameplay", meta=(ClampMin="0.0", UIMin="0.10", UIMax="0.50"))
+	float KickCooldown = 0.65f;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Kick|Gameplay")
+	float NextAllowedKickTime = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Gameplay", meta=(ClampMin="0.0", UIMin="0.03", UIMax="0.15"))
+	float SuccessfulKickTouchKillGraceTime = 0.10f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Gameplay", meta=(ClampMin="0.0", UIMin="0.1", UIMax="0.3"))
+	float KickAttackCancelWindow = 0.20f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Debug")
+	bool bKickDebugDraw = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel")
 	TSubclassOf<UCameraShakeBase> KickCameraShake;
@@ -233,7 +267,7 @@ public:
 	TArray<FName> KickHiddenBoneNames;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Debug")
-	bool bKickVisualDebug = true;
+	bool bKickVisualDebug = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
 	float KickAnimationDuration = 0.45f;
@@ -412,6 +446,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Modes")
 	void ToggleImmortalMode();
 
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Performance Debug")
+	void TogglePerformanceDebug();
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Performance Debug")
+	void SetPerformanceDebugEnabled(bool bEnabled);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Performance Debug")
+	void DumpPerformanceSnapshot();
+
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void ResetForNewRun(const FVector& SpawnLocation, const FRotator& SpawnRotation);
 
@@ -460,6 +503,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Modes")
 	bool IsImmortalMode() const { return bImmortalMode; }
 
+	UFUNCTION(BlueprintPure, Category="Kick|Gameplay")
+	bool DidRecentKickProtectFromEnemy(const AOBEnemy* Enemy) const;
+
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Dodge")
 	bool IsDodgeReady() const { return bDodgeReady; }
 
@@ -500,6 +546,8 @@ protected:
 	TArray<FName> LastKickMaskHiddenBoneNames;
 	FString LastKickMaskHiddenBoneList;
 	FString LastKickMaskVisibleWhitelist;
+	float LastSuccessfulKickTime = -1000.0f;
+	TWeakObjectPtr<AOBEnemy> LastSuccessfulKickEnemy;
 	bool bPlayingActionAnimation = false;
 	UAnimationAsset* ActiveLocomotionAnimation = nullptr;
 
@@ -509,6 +557,7 @@ protected:
 	FTimerHandle ActionAnimationTimerHandle;
 	FTimerHandle KickRecoveryTimerHandle;
 	FTimerHandle KickLegAnimationTimerHandle;
+	FTimerHandle PerformanceDebugTimerHandle;
 
 	TSubclassOf<UAnimInstance> DefaultPlayerAnimClass;
 
@@ -521,7 +570,7 @@ protected:
 	void ToggleMouseSensitivityUI();
 	void RestartLevel();
 	void ResetKick();
-	void ApplyKickImpact();
+	EOBKickResult GameplayKick();
 	void FinishKickRecovery();
 	void ResetDodge();
 	void UpdateDodge(float DeltaSeconds);
@@ -534,6 +583,8 @@ protected:
 	void StartKickWeaponSway();
 	void PlayKickStartFeedback();
 	void PlayKickImpactFeedback(const FVector& Origin, const FVector& Direction, int32 HitEnemyCount);
+	bool IsEnemyInKickZone(const AOBEnemy* Enemy, const FVector& Start, const FVector& Forward, float MinForwardDot, float& OutDistance, float& OutDot) const;
+	TArray<AOBEnemy*> GatherKickTargets(FVector& OutStart, FVector& OutEnd, FVector& OutForward, FVector& OutOverlapCenter, float& OutOverlapRadius, int32& OutCandidateCount, FString& OutTargetDebugText) const;
 	void ApplyFeelStop(float Duration);
 	void ResetFeelStop();
 	bool TryFindSafeDodgeDirection(FVector& OutDirection) const;
@@ -556,7 +607,7 @@ protected:
 	bool ApplyKickLegOnlyMask();
 	void ResetKickBoneMask();
 	void ShowKickVisualDebugMessage(const FString& Message) const;
-	void PlayKickLegAnimation();
+	bool PlayKickLegAnimation();
 	void FinishKickLegAnimation();
 	FVector GetBulletVisualStartLocation(const FVector& TraceStart) const;
 	FVector ResolveBulletDropLocationAfterImpact(const FHitResult& Hit) const;
@@ -569,4 +620,6 @@ protected:
 	float GetClampedMouseSensitivity(float Value) const;
 	void GetCrosshairTrace(FVector& OutTraceStart, FVector& OutTraceEnd) const;
 	AOBBulletPickup* DropBulletAt(const FVector& Location);
+	void UpdatePerformanceDebug();
+	FString BuildPerformanceSnapshotText() const;
 };

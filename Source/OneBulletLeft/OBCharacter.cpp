@@ -5,24 +5,38 @@
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimationAsset.h"
 #include "Animation/AnimSequence.h"
+#include "AIController.h"
+#include "Blueprint/UserWidget.h"
 #include "Camera/CameraComponent.h"
 #include "Camera/CameraShakeBase.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/ConfigCacheIni.h"
+#include "UObject/UObjectIterator.h"
 #include "Particles/ParticleSystem.h"
+#include "OBBulletPickup.h"
+#include "OBBulletTrailActor.h"
 #include "OBEnemy.h"
 #include "OBGameMode.h"
 #include "OBGameState.h"
 #include "OBHUD.h"
+#include "OBPanicAudioManager.h"
+#include "OBWaveManager.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogOBPerformance, Log, All);
+DEFINE_LOG_CATEGORY_STATIC(LogOBKickVisual, Log, All);
 
 namespace
 {
@@ -47,6 +61,31 @@ bool IsDisallowedKickLegMesh(const USkeletalMesh* SkeletalMesh)
 	const FString MeshPath = SkeletalMesh->GetPathName();
 	return MeshPath == TEXT("/Game/Assets/Player.Player")
 		|| MeshPath.Contains(TEXT("/Characters/Mannequins/Meshes/SKM_Manny"));
+}
+
+bool IsVisibleUserWidget(const UUserWidget* Widget)
+{
+	return Widget
+		&& Widget->IsInViewport()
+		&& Widget->GetVisibility() != ESlateVisibility::Collapsed
+		&& Widget->GetVisibility() != ESlateVisibility::Hidden;
+}
+
+const TCHAR* GetKickResultName(EOBKickResult Result)
+{
+	switch (Result)
+	{
+	case EOBKickResult::BlockedByCooldown:
+		return TEXT("BlockedByCooldown");
+	case EOBKickResult::BlockedByDeath:
+		return TEXT("BlockedByDeath");
+	case EOBKickResult::Miss:
+		return TEXT("Miss");
+	case EOBKickResult::Hit:
+		return TEXT("Hit");
+	default:
+		return TEXT("Unknown");
+	}
 }
 }
 
@@ -77,6 +116,7 @@ AOBCharacter::AOBCharacter()
 	Player_Leg->SetOnlyOwnerSee(true);
 	Player_Leg->SetOwnerNoSee(false);
 	Player_Leg->SetCastShadow(false);
+	Player_Leg->bCastHiddenShadow = false;
 
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> DefaultWeapon(TEXT("/Game/Weapons/GrenadeLauncher/Meshes/SK_GrenadeLauncher.SK_GrenadeLauncher"));
 	if (DefaultWeapon.Succeeded())
@@ -150,7 +190,7 @@ void AOBCharacter::BeginPlay()
 	{
 		KickLegInitialRelativeTransform = Player_Leg->GetRelativeTransform();
 		UE_LOG(
-			LogTemp,
+			LogOBKickVisual,
 			Log,
 			TEXT("Kick visual BeginPlay: CharacterClass=%s ExpectedRuntimeCharacterClass=%s Player_Leg=%s Parent=%s bOverrideKickLegTransformFromVariables=%s bKickVisualCalibrationMode=%s InitialRelativeTransform=%s WorldTransform=%s"),
 			*GetClass()->GetName(),
@@ -164,12 +204,12 @@ void AOBCharacter::BeginPlay()
 
 		if (ExpectedRuntimeCharacterClass && !IsA(ExpectedRuntimeCharacterClass))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Kick visual BeginPlay: Runtime character class %s is not using expected BP class %s."), *GetClass()->GetName(), *GetNameSafe(ExpectedRuntimeCharacterClass.Get()));
+			UE_LOG(LogOBKickVisual, Warning, TEXT("Kick visual BeginPlay: Runtime character class %s is not using expected BP class %s."), *GetClass()->GetName(), *GetNameSafe(ExpectedRuntimeCharacterClass.Get()));
 		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Kick visual BeginPlay: Player_Leg component was not found on %s."), *GetName());
+		UE_LOG(LogOBKickVisual, Warning, TEXT("Kick visual BeginPlay: Player_Leg component was not found on %s."), *GetName());
 	}
 
 	if (AOBGameState* OneBulletState = GetWorld()->GetGameState<AOBGameState>())
@@ -188,6 +228,13 @@ void AOBCharacter::BeginPlay()
 	{
 		ConfigureFirstPersonBodyVisibility();
 		HideFirstPersonHead();
+	}
+
+	const bool bStartPerformanceDebug = bPerformanceDebugEnabled;
+	bPerformanceDebugEnabled = false;
+	if (bStartPerformanceDebug)
+	{
+		SetPerformanceDebugEnabled(true);
 	}
 }
 
@@ -422,67 +469,89 @@ void AOBCharacter::Shoot()
 
 void AOBCharacter::Kick()
 {
-	if (bDead || !bKickReady || bKickRecovering)
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("Kick input pressed. CurrentTime=%.3f NextAllowedKickTime=%.3f CooldownRemaining=%.3f PlayerDead=%s KickReady=%s KickRecovering=%s"),
+		GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f,
+		NextAllowedKickTime,
+		GetWorld() ? FMath::Max(0.0f, NextAllowedKickTime - GetWorld()->GetTimeSeconds()) : -1.0f,
+		bDead ? TEXT("true") : TEXT("false"),
+		bKickReady ? TEXT("true") : TEXT("false"),
+		bKickRecovering ? TEXT("true") : TEXT("false"));
+
+	const EOBKickResult KickResult = GameplayKick();
+	const bool bGameplayExecuted = KickResult == EOBKickResult::Hit || KickResult == EOBKickResult::Miss;
+	if (!bGameplayExecuted)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("Kick result: %s. GameplayKick executed=false Visual started=false"), GetKickResultName(KickResult));
 		return;
 	}
 
 	bKickReady = false;
 	bKickRecovering = true;
-	GetWorldTimerManager().SetTimer(KickCooldownTimerHandle, this, &AOBCharacter::ResetKick, KickCooldown, false);
+	GetWorldTimerManager().SetTimer(KickCooldownTimerHandle, this, &AOBCharacter::ResetKick, FMath::Max(KickCooldown, 0.0f), false);
 	GetWorldTimerManager().SetTimer(KickRecoveryTimerHandle, this, &AOBCharacter::FinishKickRecovery, FMath::Max(KickRecoveryTime, 0.01f), false);
-	PlayKickLegAnimation();
+	const bool bVisualStarted = PlayKickLegAnimation();
 	StartKickWeaponSway();
 	PlayKickStartFeedback();
-	ApplyKickImpact();
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("Kick result: %s. GameplayKick executed=true Visual started=%s"),
+		GetKickResultName(KickResult),
+		bVisualStarted ? TEXT("true") : TEXT("false"));
 }
 
-void AOBCharacter::ApplyKickImpact()
+EOBKickResult AOBCharacter::GameplayKick()
 {
 	if (bDead)
 	{
-		return;
+		return EOBKickResult::BlockedByDeath;
 	}
 
-	const UCameraComponent* KickCamera = FirstPersonCamera;
-	FVector PushForward = KickCamera ? KickCamera->GetForwardVector().GetSafeNormal2D() : GetActorForwardVector().GetSafeNormal2D();
-	if (PushForward.IsNearlyZero())
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	if (Now < NextAllowedKickTime)
 	{
-		PushForward = FVector::ForwardVector;
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("Kick blocked by cooldown. CurrentTime=%.3f NextAllowedKickTime=%.3f CooldownRemaining=%.3f"),
+			Now,
+			NextAllowedKickTime,
+			FMath::Max(0.0f, NextAllowedKickTime - Now));
+		return EOBKickResult::BlockedByCooldown;
 	}
-	const FVector CameraLocation = KickCamera ? KickCamera->GetComponentLocation() : GetActorLocation() + FVector::UpVector * 45.0f;
-	const FVector Start = CameraLocation + PushForward * 20.0f - FVector::UpVector * 30.0f;
-	const FVector End = Start + PushForward * KickTraceDistance;
-	const float MinForwardDot = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(KickConeAngleDegrees, 1.0f, 180.0f) * 0.5f));
+	NextAllowedKickTime = Now + FMath::Max(KickCooldown, 0.0f);
 
-	TArray<AOBEnemy*> HitEnemies;
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(OneBulletKick), false, this);
-	const FCollisionShape Sphere = FCollisionShape::MakeSphere(KickTraceRadius);
+	FVector Start = FVector::ZeroVector;
+	FVector End = FVector::ZeroVector;
+	FVector PushForward = FVector::ForwardVector;
+	FVector OverlapCenter = FVector::ZeroVector;
+	float OverlapRadius = 0.0f;
+	int32 CandidateCount = 0;
+	FString TargetDebugText;
+	TArray<AOBEnemy*> HitEnemies = GatherKickTargets(Start, End, PushForward, OverlapCenter, OverlapRadius, CandidateCount, TargetDebugText);
 
-	TArray<FHitResult> Hits;
-	GetWorld()->SweepMultiByChannel(Hits, Start, End, FQuat::Identity, ECC_Pawn, Sphere, Params);
-	for (const FHitResult& Hit : Hits)
-	{
-		AOBEnemy* Enemy = Cast<AOBEnemy>(Hit.GetActor());
-		if (!Enemy || Enemy->IsDead())
-		{
-			continue;
-		}
-
-		const FVector DirectionToEnemy = (Enemy->GetActorLocation() - Start).GetSafeNormal2D();
-		if (DirectionToEnemy.IsNearlyZero() || FVector::DotProduct(PushForward, DirectionToEnemy) < MinForwardDot)
-		{
-			continue;
-		}
-
-		HitEnemies.AddUnique(Enemy);
-	}
-
+	AOBEnemy* SelectedEnemy = nullptr;
+	float SelectedDistance = TNumericLimits<float>::Max();
+	float SelectedDot = -1.0f;
+	const float LogMinForwardDot = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(KickHalfAngleDegrees, 1.0f, 90.0f)));
 	for (AOBEnemy* Enemy : HitEnemies)
 	{
 		if (!Enemy)
 		{
 			continue;
+		}
+
+		float Distance = 0.0f;
+		float Dot = -1.0f;
+		IsEnemyInKickZone(Enemy, Start, PushForward, LogMinForwardDot, Distance, Dot);
+		if (Distance < SelectedDistance)
+		{
+			SelectedEnemy = Enemy;
+			SelectedDistance = Distance;
+			SelectedDot = Dot;
 		}
 
 		const FVector AwayFromPlayer = (Enemy->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
@@ -496,12 +565,168 @@ void AOBCharacter::ApplyKickImpact()
 	}
 
 	const int32 HitEnemyCount = HitEnemies.Num();
+	const bool bHit = HitEnemyCount > 0;
+	if (bHit)
+	{
+		LastSuccessfulKickTime = GetWorld() ? GetWorld()->GetTimeSeconds() : LastSuccessfulKickTime;
+		LastSuccessfulKickEnemy = SelectedEnemy;
+	}
 	PlayKickImpactFeedback(GetActorLocation(), PushForward, HitEnemyCount);
 	if (HitEnemyCount > 0 && KickImpactHitStopDuration > KINDA_SMALL_NUMBER)
 	{
 		ApplyFeelStop(KickImpactHitStopDuration);
 	}
 	OnPlayerKick(Start, End, HitEnemyCount);
+
+	if (bKickDebugDraw)
+	{
+		const FColor DebugColor = bHit ? FColor::Green : FColor::Red;
+		DrawDebugLine(GetWorld(), Start, End, DebugColor, false, 1.25f, 0, 2.0f);
+		DrawDebugSphere(GetWorld(), Start, KickRadius, 16, DebugColor, false, 1.25f);
+		DrawDebugSphere(GetWorld(), End, KickRadius, 16, DebugColor, false, 1.25f);
+		DrawDebugSphere(GetWorld(), OverlapCenter, OverlapRadius, 24, FColor::Cyan, false, 1.25f);
+		for (AOBEnemy* Enemy : HitEnemies)
+		{
+			if (Enemy)
+			{
+				DrawDebugLine(GetWorld(), Start, Enemy->GetActorLocation(), FColor::Green, false, 1.25f, 0, 1.5f);
+				DrawDebugSphere(GetWorld(), Enemy->GetActorLocation(), 24.0f, 8, FColor::Green, false, 1.25f);
+			}
+		}
+
+		const float ConeLength = FMath::Max(KickRange, KickTraceDistance);
+		const FVector LeftCone = PushForward.RotateAngleAxis(-KickHalfAngleDegrees, FVector::UpVector);
+		const FVector RightCone = PushForward.RotateAngleAxis(KickHalfAngleDegrees, FVector::UpVector);
+		DrawDebugLine(GetWorld(), Start, Start + LeftCone * ConeLength, FColor::Blue, false, 1.25f, 0, 1.0f);
+		DrawDebugLine(GetWorld(), Start, Start + RightCone * ConeLength, FColor::Blue, false, 1.25f, 0, 1.0f);
+	}
+
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("GameplayKickAOE executed=true TraceStart=%s TraceEnd=%s KickRadius=%.1f KickRange=%.1f OverlapCandidates=%d ValidKickTargets=%d TargetDetails=[%s] SelectedEnemy=%s Dot=%.3f Distance=%.1f KickResult=%s KnockbackAppliedCount=%d StunAppliedCount=%d EnemyAttacksCancelledCount=%d NextAllowedKickTime=%.3f"),
+		*Start.ToCompactString(),
+		*End.ToCompactString(),
+		KickRadius,
+		KickRange,
+		CandidateCount,
+		HitEnemyCount,
+		*TargetDebugText,
+		*GetNameSafe(SelectedEnemy),
+		SelectedDot,
+		SelectedDistance == TNumericLimits<float>::Max() ? -1.0f : SelectedDistance,
+		GetKickResultName(bHit ? EOBKickResult::Hit : EOBKickResult::Miss),
+		HitEnemyCount,
+		HitEnemyCount,
+		HitEnemyCount,
+		NextAllowedKickTime);
+
+	return bHit ? EOBKickResult::Hit : EOBKickResult::Miss;
+}
+
+bool AOBCharacter::IsEnemyInKickZone(const AOBEnemy* Enemy, const FVector& Start, const FVector& Forward, float MinForwardDot, float& OutDistance, float& OutDot) const
+{
+	OutDistance = -1.0f;
+	OutDot = -1.0f;
+	if (!Enemy || Enemy->IsDead())
+	{
+		return false;
+	}
+
+	const FVector ToEnemy = Enemy->GetActorLocation() - Start;
+	const FVector ToEnemy2D = ToEnemy.GetSafeNormal2D();
+	if (ToEnemy2D.IsNearlyZero())
+	{
+		OutDistance = 0.0f;
+		OutDot = 1.0f;
+		return true;
+	}
+
+	OutDistance = FVector::Dist2D(Start, Enemy->GetActorLocation());
+	OutDot = FVector::DotProduct(Forward.GetSafeNormal2D(), ToEnemy2D);
+	const float EffectiveKickRange = FMath::Max(KickRange, KickTraceDistance);
+	const float EffectiveKickRadius = FMath::Max(KickRadius, KickTraceRadius);
+	const float EffectiveCloseRadius = FMath::Max(KickEmergencyCloseRadius, EffectiveKickRadius * 0.5f);
+	const float EnemyRadius = Enemy->GetCapsuleComponent() ? Enemy->GetCapsuleComponent()->GetScaledCapsuleRadius() : 0.0f;
+	const bool bVeryClose = OutDistance <= EffectiveCloseRadius + EnemyRadius;
+	const bool bInsideReach = OutDistance <= EffectiveKickRange + EnemyRadius;
+	const bool bInsideAngle = OutDot >= (bVeryClose ? 0.0f : MinForwardDot);
+	return bInsideReach && bInsideAngle;
+}
+
+TArray<AOBEnemy*> AOBCharacter::GatherKickTargets(FVector& OutStart, FVector& OutEnd, FVector& OutForward, FVector& OutOverlapCenter, float& OutOverlapRadius, int32& OutCandidateCount, FString& OutTargetDebugText) const
+{
+	TArray<AOBEnemy*> Targets;
+	OutCandidateCount = 0;
+	OutTargetDebugText.Reset();
+
+	const UCameraComponent* KickCamera = FirstPersonCamera;
+	OutForward = KickCamera ? KickCamera->GetForwardVector().GetSafeNormal2D() : GetActorForwardVector().GetSafeNormal2D();
+	if (OutForward.IsNearlyZero())
+	{
+		OutForward = FVector::ForwardVector;
+	}
+
+	const FVector CameraLocation = KickCamera ? KickCamera->GetComponentLocation() : GetActorLocation() + FVector::UpVector * 45.0f;
+	const float EffectiveKickRange = FMath::Max(KickRange, KickTraceDistance);
+	const float EffectiveKickRadius = FMath::Max(KickRadius, KickTraceRadius);
+	const float EffectiveHalfAngle = FMath::Max(KickHalfAngleDegrees, FMath::Clamp(KickConeAngleDegrees, 1.0f, 180.0f) * 0.5f);
+	const float MinForwardDot = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(EffectiveHalfAngle, 1.0f, 90.0f)));
+
+	OutStart = CameraLocation - OutForward * 30.0f - FVector::UpVector * 30.0f;
+	OutEnd = OutStart + OutForward * EffectiveKickRange;
+	OutOverlapCenter = CameraLocation + OutForward * (EffectiveKickRange * 0.5f);
+	OutOverlapRadius = FMath::Max(EffectiveKickRange, EffectiveKickRadius);
+
+	TArray<FOverlapResult> Overlaps;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(OneBulletKickGather), false, this);
+	if (GetWorld())
+	{
+		GetWorld()->OverlapMultiByChannel(
+			Overlaps,
+			OutOverlapCenter,
+			FQuat::Identity,
+			ECC_Pawn,
+			FCollisionShape::MakeSphere(OutOverlapRadius),
+			Params);
+	}
+
+	TArray<FString> TargetDebugParts;
+	for (const FOverlapResult& Overlap : Overlaps)
+	{
+		AOBEnemy* Enemy = Cast<AOBEnemy>(Overlap.GetActor());
+		if (!Enemy || Enemy->IsDead())
+		{
+			continue;
+		}
+
+		++OutCandidateCount;
+		float Distance = -1.0f;
+		float Dot = -1.0f;
+		const bool bValidTarget = IsEnemyInKickZone(Enemy, OutStart, OutForward, MinForwardDot, Distance, Dot);
+		const float AngleDegrees = Dot >= -1.0f ? FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.0f, 1.0f))) : -1.0f;
+		TargetDebugParts.Add(FString::Printf(
+			TEXT("%s dist=%.1f angle=%.1f valid=%s"),
+			*GetNameSafe(Enemy),
+			Distance,
+			AngleDegrees,
+			bValidTarget ? TEXT("true") : TEXT("false")));
+
+		if (bKickDebugDraw && GetWorld())
+		{
+			const FColor CandidateColor = bValidTarget ? FColor::Green : FColor::Yellow;
+			DrawDebugLine(GetWorld(), OutStart, Enemy->GetActorLocation(), CandidateColor, false, 1.25f, 0, 1.0f);
+			DrawDebugSphere(GetWorld(), Enemy->GetActorLocation(), bValidTarget ? 28.0f : 20.0f, 8, CandidateColor, false, 1.25f);
+		}
+
+		if (bValidTarget)
+		{
+			Targets.AddUnique(Enemy);
+		}
+	}
+
+	OutTargetDebugText = FString::Join(TargetDebugParts, TEXT("; "));
+	return Targets;
 }
 
 void AOBCharacter::Dodge()
@@ -617,6 +842,41 @@ FTransform AOBCharacter::GetPlayerLegRelativeTransform() const
 	return Player_Leg ? Player_Leg->GetRelativeTransform() : FTransform(KickLegRelativeRotation, KickLegRelativeLocation, KickLegRelativeScale);
 }
 
+bool AOBCharacter::DidRecentKickProtectFromEnemy(const AOBEnemy* Enemy) const
+{
+	if (!Enemy || !GetWorld())
+	{
+		return false;
+	}
+
+	const float TimeSinceKick = GetWorld()->GetTimeSeconds() - LastSuccessfulKickTime;
+	const float ProtectionWindow = FMath::Max(SuccessfulKickTouchKillGraceTime, KickAttackCancelWindow);
+	if (TimeSinceKick < 0.0f || TimeSinceKick > ProtectionWindow)
+	{
+		return false;
+	}
+
+	if (LastSuccessfulKickEnemy.IsValid() && LastSuccessfulKickEnemy.Get() == Enemy)
+	{
+		return true;
+	}
+
+	const UCameraComponent* KickCamera = FirstPersonCamera;
+	FVector Forward = KickCamera ? KickCamera->GetForwardVector().GetSafeNormal2D() : GetActorForwardVector().GetSafeNormal2D();
+	if (Forward.IsNearlyZero())
+	{
+		Forward = FVector::ForwardVector;
+	}
+
+	const FVector CameraLocation = KickCamera ? KickCamera->GetComponentLocation() : GetActorLocation() + FVector::UpVector * 45.0f;
+	const FVector Start = CameraLocation - Forward * 30.0f - FVector::UpVector * 30.0f;
+	const float EffectiveHalfAngle = FMath::Max(KickHalfAngleDegrees, FMath::Clamp(KickConeAngleDegrees, 1.0f, 180.0f) * 0.5f);
+	const float MinForwardDot = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(EffectiveHalfAngle, 1.0f, 90.0f)));
+	float Distance = 0.0f;
+	float Dot = -1.0f;
+	return IsEnemyInKickZone(Enemy, Start, Forward, MinForwardDot, Distance, Dot);
+}
+
 void AOBCharacter::ToggleImmortalMode()
 {
 	bImmortalMode = !bImmortalMode;
@@ -634,6 +894,89 @@ void AOBCharacter::ToggleImmortalMode()
 	OnPlayerImmortalModeChanged(bImmortalMode);
 }
 
+void AOBCharacter::TogglePerformanceDebug()
+{
+	SetPerformanceDebugEnabled(!bPerformanceDebugEnabled);
+}
+
+void AOBCharacter::SetPerformanceDebugEnabled(bool bEnabled)
+{
+	if (bPerformanceDebugEnabled == bEnabled)
+	{
+		if (bPerformanceDebugEnabled && GetWorld() && !GetWorldTimerManager().IsTimerActive(PerformanceDebugTimerHandle))
+		{
+			GetWorldTimerManager().SetTimer(
+				PerformanceDebugTimerHandle,
+				this,
+				&AOBCharacter::UpdatePerformanceDebug,
+				FMath::Max(PerformanceDebugLogInterval, 0.1f),
+				true);
+		}
+		return;
+	}
+
+	bPerformanceDebugEnabled = bEnabled;
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PerformanceDebugTimerHandle);
+		if (bPerformanceDebugEnabled)
+		{
+			World->GetTimerManager().SetTimer(
+				PerformanceDebugTimerHandle,
+				this,
+				&AOBCharacter::UpdatePerformanceDebug,
+				FMath::Max(PerformanceDebugLogInterval, 0.1f),
+				true);
+		}
+	}
+	else
+	{
+		UE_LOG(LogOBPerformance, Warning, TEXT("Performance Debug changed before World was available; timer will not start yet."));
+	}
+
+	UE_LOG(
+		LogOBPerformance,
+		Log,
+		TEXT("Performance Debug %s. Call DumpPerformanceSnapshot from Blueprint/C++ for an immediate snapshot. Suggested manual stats: stat unit, stat fps, stat game, stat gpu, stat anim, stat ai, stat audio."),
+		bPerformanceDebugEnabled ? TEXT("enabled") : TEXT("disabled"));
+
+	if (bPerformanceDebugEnabled)
+	{
+		DumpPerformanceSnapshot();
+	}
+}
+
+void AOBCharacter::DumpPerformanceSnapshot()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogOBPerformance, Warning, TEXT("DumpPerformanceSnapshot called without a valid World; snapshot will contain fallback values."));
+	}
+	else
+	{
+		const AOBGameMode* OneBulletMode = World->GetAuthGameMode<AOBGameMode>();
+		if (!OneBulletMode)
+		{
+			UE_LOG(LogOBPerformance, Warning, TEXT("DumpPerformanceSnapshot could not find AOBGameMode; WaveManager and PanicAudioManager counters may be zero."));
+		}
+		else
+		{
+			if (!OneBulletMode->GetWaveManager())
+			{
+				UE_LOG(LogOBPerformance, Warning, TEXT("DumpPerformanceSnapshot could not find WaveManager; wave counters will be zero."));
+			}
+			if (!OneBulletMode->PanicAudioManager)
+			{
+				UE_LOG(LogOBPerformance, Warning, TEXT("DumpPerformanceSnapshot could not find PanicAudioManager; panic audio counters will be zero."));
+			}
+		}
+	}
+
+	const FString Snapshot = BuildPerformanceSnapshotText();
+	UE_LOG(LogOBPerformance, Warning, TEXT("%s"), *Snapshot);
+}
+
 void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& SpawnRotation)
 {
 	bDead = false;
@@ -641,6 +984,7 @@ void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& 
 	bDodgeReady = true;
 	bDodging = false;
 	bKickRecovering = false;
+	NextAllowedKickTime = 0.0f;
 	bKickFOVPunchActive = false;
 	bKickFOVReturning = false;
 	bKickDashing = false;
@@ -1172,6 +1516,7 @@ void AOBCharacter::ConfigurePlayerMesh()
 {
 	GetMesh()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetMesh()->SetCastShadow(false);
+	GetMesh()->bCastHiddenShadow = false;
 	GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -96.0f));
 	GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
 	GetMesh()->SetRelativeScale3D(FVector(1.0f));
@@ -1240,6 +1585,7 @@ void AOBCharacter::ConfigureKickLeg()
 	Player_Leg->SetOnlyOwnerSee(true);
 	Player_Leg->SetOwnerNoSee(false);
 	Player_Leg->SetCastShadow(false);
+	Player_Leg->bCastHiddenShadow = false;
 	const bool bIsGameWorld = GetWorld() && GetWorld()->IsGameWorld();
 	Player_Leg->SetHiddenInGame(bIsGameWorld && !bKickVisualCalibrationMode);
 	Player_Leg->SetVisibility(!bIsGameWorld || bKickVisualCalibrationMode, true);
@@ -1254,7 +1600,7 @@ void AOBCharacter::ConfigureKickLeg()
 	}
 	else if (!Player_Leg->GetSkeletalMeshAsset())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Player_Leg is configured but no first-person leg SkeletalMesh is assigned. Set KickLegMesh or the Player_Leg component mesh in Blueprint."));
+		UE_LOG(LogOBKickVisual, Warning, TEXT("Player_Leg is configured but no first-person leg SkeletalMesh is assigned. Set KickLegMesh or the Player_Leg component mesh in Blueprint."));
 	}
 }
 
@@ -1301,7 +1647,8 @@ void AOBCharacter::ConfigureWeapon()
 		WeaponMesh->AttachToComponent(AttachParent, FAttachmentTransformRules::KeepRelativeTransform, AttachSocket);
 	}
 	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	WeaponMesh->SetCastShadow(true);
+	WeaponMesh->SetCastShadow(false);
+	WeaponMesh->bCastHiddenShadow = false;
 	if (WeaponModel)
 	{
 		WeaponMesh->SetSkeletalMesh(WeaponModel);
@@ -1463,7 +1810,7 @@ bool AOBCharacter::ApplyKickLegOnlyMask()
 	USkeletalMesh* CurrentLegMesh = Player_Leg->GetSkeletalMeshAsset();
 	if (!CurrentLegMesh)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyKickLegOnlyMask called but Player_Leg has no skeletal mesh."));
+		UE_LOG(LogOBKickVisual, Warning, TEXT("ApplyKickLegOnlyMask called but Player_Leg has no skeletal mesh."));
 		return false;
 	}
 
@@ -1511,7 +1858,7 @@ bool AOBCharacter::ApplyKickLegOnlyMask()
 	KickHiddenBoneNames = LastKickMaskHiddenBoneNames;
 
 	UE_LOG(
-		LogTemp,
+		LogOBKickVisual,
 		Log,
 		TEXT("ApplyKickLegOnlyMask called. KickUsesRightLeg=%s Hidden bones count=%d Hidden bones list=%s Visible leg whitelist=%s KickVisualHideEarlyTime=%.3f"),
 		bKickUsesRightLeg ? TEXT("true") : TEXT("false"),
@@ -1547,59 +1894,59 @@ void AOBCharacter::ResetKickBoneMask()
 
 void AOBCharacter::ShowKickVisualDebugMessage(const FString& Message) const
 {
-	if (bKickVisualDebug && GEngine)
+	if (bKickVisualDebug)
 	{
-		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, Message);
+		UE_LOG(LogOBKickVisual, Log, TEXT("%s"), *Message);
 	}
 }
 
-void AOBCharacter::PlayKickLegAnimation()
+bool AOBCharacter::PlayKickLegAnimation()
 {
-	UE_LOG(LogTemp, Log, TEXT("Kick input pressed"));
+	UE_LOG(LogOBKickVisual, Log, TEXT("Kick input pressed"));
 	if (!Player_Leg)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Kick input pressed but Player_Leg component was not found on %s."), *GetName());
+		UE_LOG(LogOBKickVisual, Warning, TEXT("Kick input pressed but Player_Leg component was not found on %s."), *GetName());
 		ShowKickVisualDebugMessage(TEXT("Kick anim not visible: no Player_Leg component"));
-		return;
+		return false;
 	}
 
 	const FTransform RelativeTransformBeforeConfigure = Player_Leg->GetRelativeTransform();
 	ConfigureKickLeg();
 	const FTransform RelativeTransformAfterConfigure = Player_Leg->GetRelativeTransform();
-	UE_LOG(LogTemp, Log, TEXT("Kick input: Player_Leg component found: %s."), *GetNameSafe(Player_Leg));
+	UE_LOG(LogOBKickVisual, Log, TEXT("Kick input: Player_Leg component found: %s."), *GetNameSafe(Player_Leg));
 
 	USkeletalMesh* CurrentLegMesh = Player_Leg->GetSkeletalMeshAsset();
 	if (!CurrentLegMesh)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Kick input pressed but Player_Leg has no first-person leg SkeletalMesh assigned. Set KickLegMesh or Player_Leg mesh in Blueprint."));
+		UE_LOG(LogOBKickVisual, Warning, TEXT("Kick input pressed but Player_Leg has no first-person leg SkeletalMesh assigned. Set KickLegMesh or Player_Leg mesh in Blueprint."));
 		ShowKickVisualDebugMessage(TEXT("Kick anim not visible: no skeletal mesh"));
-		return;
+		return false;
 	}
-	UE_LOG(LogTemp, Log, TEXT("Kick input: Player_Leg SkeletalMesh assigned: %s."), *GetNameSafe(CurrentLegMesh));
+	UE_LOG(LogOBKickVisual, Log, TEXT("Kick input: Player_Leg SkeletalMesh assigned: %s."), *GetNameSafe(CurrentLegMesh));
 	if (IsDisallowedKickLegMesh(CurrentLegMesh))
 	{
 		if (!bUseFullBodyMeshAsKickSource)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Player_Leg uses full-body mesh and bUseFullBodyMeshAsKickSource is disabled. Current mesh: %s"), *CurrentLegMesh->GetPathName());
+			UE_LOG(LogOBKickVisual, Warning, TEXT("Player_Leg uses full-body mesh and bUseFullBodyMeshAsKickSource is disabled. Current mesh: %s"), *CurrentLegMesh->GetPathName());
 			ShowKickVisualDebugMessage(TEXT("Kick anim not visible: full-body mesh blocked"));
-			return;
+			return false;
 		}
-		UE_LOG(LogTemp, Warning, TEXT("Player_Leg uses full-body mesh as animation source. Applying first-person kick bone mask. Current mesh: %s"), *CurrentLegMesh->GetPathName());
+		UE_LOG(LogOBKickVisual, Warning, TEXT("Player_Leg uses full-body mesh as animation source. Applying first-person kick bone mask. Current mesh: %s"), *CurrentLegMesh->GetPathName());
 	}
 
 	if (!KickAnimation)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Kick input pressed but KickingLeg_Anim / KickAnimation is not assigned."));
+		UE_LOG(LogOBKickVisual, Warning, TEXT("Kick input pressed but KickingLeg_Anim / KickAnimation is not assigned."));
 		ShowKickVisualDebugMessage(TEXT("Kick anim not visible: anim not assigned"));
-		return;
+		return false;
 	}
-	UE_LOG(LogTemp, Log, TEXT("Kick input: KickingLeg_Anim assigned: %s."), *GetNameSafe(KickAnimation));
+	UE_LOG(LogOBKickVisual, Log, TEXT("Kick input: KickingLeg_Anim assigned: %s."), *GetNameSafe(KickAnimation));
 
 	const USkeleton* LegSkeleton = CurrentLegMesh->GetSkeleton();
 	const USkeleton* AnimSkeleton = KickAnimation->GetSkeleton();
 	const bool bSkeletonCompatible = IsAnimationCompatibleWithMesh(KickAnimation, Player_Leg);
 	UE_LOG(
-		LogTemp,
+		LogOBKickVisual,
 		Log,
 		TEXT("Kick input: Player_Leg skeleton=%s KickingLeg_Anim skeleton=%s Skeleton compatible=%s."),
 		*GetNameSafe(LegSkeleton),
@@ -1608,13 +1955,13 @@ void AOBCharacter::PlayKickLegAnimation()
 
 	if (!bSkeletonCompatible)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Player_Leg mesh skeleton does not match KickingLeg_Anim skeleton. Kick visual skipped because assets are invalid."));
+		UE_LOG(LogOBKickVisual, Warning, TEXT("Player_Leg mesh skeleton does not match KickingLeg_Anim skeleton. Kick visual skipped because assets are invalid."));
 		ShowKickVisualDebugMessage(TEXT("Kick anim not visible: skeleton mismatch"));
-		return;
+		return false;
 	}
 
 	UE_LOG(
-		LogTemp,
+		LogOBKickVisual,
 		Log,
 		TEXT("Kick input: bOverrideKickLegTransformFromVariables=%s KickLegRelativeLocation=%s KickLegRelativeRotation=%s KickLegRelativeScale=%s"),
 		bOverrideKickLegTransformFromVariables ? TEXT("true") : TEXT("false"),
@@ -1622,7 +1969,7 @@ void AOBCharacter::PlayKickLegAnimation()
 		*KickLegRelativeRotation.ToCompactString(),
 		*KickLegRelativeScale.ToCompactString());
 	UE_LOG(
-		LogTemp,
+		LogOBKickVisual,
 		Log,
 		TEXT("Kick input: Player_Leg=%s Parent=%s Mesh=%s Anim=%s RelativeBeforeConfigure=%s RelativeAfterConfigure=%s InitialRelativeTransform=%s WorldTransform=%s"),
 		*GetNameSafe(Player_Leg),
@@ -1640,7 +1987,7 @@ void AOBCharacter::PlayKickLegAnimation()
 	Player_Leg->SetComponentTickEnabled(true);
 	Player_Leg->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 	const bool bBoneMaskApplied = ApplyKickLegOnlyMask();
-	UE_LOG(LogTemp, Log, TEXT("Kick visual: Player_Leg hidden before show=%s visible after show=%s Bone mask applied=%s Hidden bones count=%d Visible leg whitelist=%s"),
+	UE_LOG(LogOBKickVisual, Log, TEXT("Kick visual: Player_Leg hidden before show=%s visible after show=%s Bone mask applied=%s Hidden bones count=%d Visible leg whitelist=%s"),
 		bWasHiddenBeforeShow ? TEXT("true") : TEXT("false"),
 		Player_Leg->IsVisible() && !Player_Leg->bHiddenInGame ? TEXT("true") : TEXT("false"),
 		bBoneMaskApplied ? TEXT("true") : TEXT("false"),
@@ -1655,7 +2002,7 @@ void AOBCharacter::PlayKickLegAnimation()
 			const float PlayedDuration = LegAnimInstance->Montage_Play(KickMontage, FMath::Max(KickPlayRate, 0.01f));
 			if (PlayedDuration > 0.0f)
 			{
-				UE_LOG(LogTemp, Log, TEXT("Started first-person kick montage %s on Player_Leg."), *GetNameSafe(KickMontage));
+				UE_LOG(LogOBKickVisual, Log, TEXT("Started first-person kick montage %s on Player_Leg."), *GetNameSafe(KickMontage));
 				GetWorldTimerManager().ClearTimer(KickLegAnimationTimerHandle);
 				const float HideDelay = FMath::Max(0.01f, PlayedDuration - FMath::Max(KickVisualHideEarlyTime, 0.0f));
 				if (!bKickVisualCalibrationMode)
@@ -1667,7 +2014,7 @@ void AOBCharacter::PlayKickLegAnimation()
 						HideDelay,
 						false);
 				}
-				UE_LOG(LogTemp, Log, TEXT("Kick visual: Animation mode=Montage Animation length=%.2f KickVisualHideEarlyTime=%.2f Actual hide delay=%.2f Animation started on Player_Leg=true Player_Leg will hide after %.2f seconds"),
+				UE_LOG(LogOBKickVisual, Log, TEXT("Kick visual: Animation mode=Montage Animation length=%.2f KickVisualHideEarlyTime=%.2f Actual hide delay=%.2f Animation started on Player_Leg=true Player_Leg will hide after %.2f seconds"),
 					PlayedDuration,
 					KickVisualHideEarlyTime,
 					bKickVisualCalibrationMode ? -1.0f : HideDelay,
@@ -1675,16 +2022,18 @@ void AOBCharacter::PlayKickLegAnimation()
 			}
 			else
 			{
-				UE_LOG(LogTemp, Warning, TEXT("Failed to start first-person kick montage %s on Player_Leg."), *GetNameSafe(KickMontage));
+				UE_LOG(LogOBKickVisual, Warning, TEXT("Failed to start first-person kick montage %s on Player_Leg."), *GetNameSafe(KickMontage));
 				ShowKickVisualDebugMessage(TEXT("Kick anim not visible: anim not started"));
+				return false;
 			}
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("KickingLeg_Anim is a montage, but Player_Leg has no AnimInstance to play it."));
+			UE_LOG(LogOBKickVisual, Warning, TEXT("KickingLeg_Anim is a montage, but Player_Leg has no AnimInstance to play it."));
 			ShowKickVisualDebugMessage(TEXT("Kick anim not visible: no Player_Leg AnimInstance"));
+			return false;
 		}
-		return;
+		return true;
 	}
 
 	Player_Leg->SetAnimationMode(EAnimationMode::AnimationSingleNode);
@@ -1694,7 +2043,7 @@ void AOBCharacter::PlayKickLegAnimation()
 		SingleNodeInstance->SetPlayRate(FMath::Max(bKickVisualCalibrationMode ? KickVisualCalibrationPlayRate : KickPlayRate, 0.01f));
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("Started first-person kick animation %s on Player_Leg."), *GetNameSafe(KickAnimation));
+	UE_LOG(LogOBKickVisual, Log, TEXT("Started first-person kick animation %s on Player_Leg."), *GetNameSafe(KickAnimation));
 
 	const float BaseDuration = FMath::Max(KickAnimationDuration, KickAnimation->GetPlayLength());
 	const float ScaledDuration = BaseDuration / FMath::Max(bKickVisualCalibrationMode ? KickVisualCalibrationPlayRate : KickPlayRate, 0.01f);
@@ -1709,11 +2058,12 @@ void AOBCharacter::PlayKickLegAnimation()
 			HideDelay,
 			false);
 	}
-	UE_LOG(LogTemp, Log, TEXT("Kick visual: Animation mode=SingleNode Animation length=%.2f KickVisualHideEarlyTime=%.2f Actual hide delay=%.2f Animation started on Player_Leg=true Player_Leg will hide after %.2f seconds"),
+	UE_LOG(LogOBKickVisual, Log, TEXT("Kick visual: Animation mode=SingleNode Animation length=%.2f KickVisualHideEarlyTime=%.2f Actual hide delay=%.2f Animation started on Player_Leg=true Player_Leg will hide after %.2f seconds"),
 		ScaledDuration,
 		KickVisualHideEarlyTime,
 		bKickVisualCalibrationMode ? -1.0f : HideDelay,
 		bKickVisualCalibrationMode ? -1.0f : HideDelay);
+	return true;
 }
 
 void AOBCharacter::FinishKickLegAnimation()
@@ -1730,7 +2080,7 @@ void AOBCharacter::FinishKickLegAnimation()
 		Player_Leg->SetHiddenInGame(true);
 		Player_Leg->SetVisibility(false, true);
 		UE_LOG(
-			LogTemp,
+			LogOBKickVisual,
 			Log,
 			TEXT("Kick visual: Player_Leg hidden before ref pose reset: %s"),
 			Player_Leg->bHiddenInGame ? TEXT("true") : TEXT("false"));
@@ -1999,6 +2349,168 @@ void AOBCharacter::GetCrosshairTrace(FVector& OutTraceStart, FVector& OutTraceEn
 	}
 
 	OutTraceEnd = OutTraceStart + AimDirection * ShootRange;
+}
+
+void AOBCharacter::UpdatePerformanceDebug()
+{
+	if (!bPerformanceDebugEnabled)
+	{
+		return;
+	}
+
+	const FString Snapshot = BuildPerformanceSnapshotText();
+	UE_LOG(LogOBPerformance, Log, TEXT("%s"), *Snapshot);
+}
+
+FString AOBCharacter::BuildPerformanceSnapshotText() const
+{
+	const UWorld* World = GetWorld();
+	const float FrameSeconds = World ? World->GetDeltaSeconds() : FApp::GetDeltaTime();
+	const float FrameMs = FrameSeconds * 1000.0f;
+	const float FPS = FrameSeconds > SMALL_NUMBER ? 1.0f / FrameSeconds : 0.0f;
+
+	int32 AliveEnemies = 0;
+	int32 TotalEnemyActors = 0;
+	int32 FastEnemies = 0;
+	int32 HeavyEnemies = 0;
+	int32 ActiveAIControllers = 0;
+	int32 BulletPickups = 0;
+	int32 BulletTrails = 0;
+	int32 VFXOrDebugActors = 0;
+	int32 ActiveWorldAudioComponents = 0;
+
+	if (World)
+	{
+		for (TActorIterator<AOBEnemy> It(World); It; ++It)
+		{
+			++TotalEnemyActors;
+			if (!It->IsDead())
+			{
+				++AliveEnemies;
+				if (It->EnemyType == EOBEnemyType::Heavy)
+				{
+					++HeavyEnemies;
+				}
+				else
+				{
+					++FastEnemies;
+				}
+			}
+		}
+
+		for (TActorIterator<AAIController> It(World); It; ++It)
+		{
+			if (IsValid(*It) && It->GetPawn())
+			{
+				++ActiveAIControllers;
+			}
+		}
+
+		for (TActorIterator<AOBBulletPickup> It(World); It; ++It)
+		{
+			if (IsValid(*It))
+			{
+				++BulletPickups;
+			}
+		}
+
+		for (TActorIterator<AOBBulletTrailActor> It(World); It; ++It)
+		{
+			if (IsValid(*It))
+			{
+				++BulletTrails;
+			}
+		}
+
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			const AActor* Actor = *It;
+			if (!IsValid(Actor))
+			{
+				continue;
+			}
+
+			TArray<UAudioComponent*> AudioComponents;
+			Actor->GetComponents<UAudioComponent>(AudioComponents);
+			for (const UAudioComponent* Component : AudioComponents)
+			{
+				if (Component && Component->IsPlaying())
+				{
+					++ActiveWorldAudioComponents;
+				}
+			}
+
+			const FString ClassName = Actor->GetClass() ? Actor->GetClass()->GetName() : FString();
+			if (ClassName.Contains(TEXT("Niagara"))
+				|| ClassName.Contains(TEXT("Debug"))
+				|| ClassName.Contains(TEXT("TextRender"))
+				|| ClassName.Contains(TEXT("PointLight"))
+				|| Actor->IsA<AOBBulletTrailActor>())
+			{
+				++VFXOrDebugActors;
+			}
+		}
+	}
+
+	int32 VisibleWidgets = 0;
+	int32 TotalWidgets = 0;
+	for (TObjectIterator<UUserWidget> It; It; ++It)
+	{
+		const UUserWidget* Widget = *It;
+		if (!Widget || Widget->GetWorld() != World)
+		{
+			continue;
+		}
+
+		++TotalWidgets;
+		if (IsVisibleUserWidget(Widget))
+		{
+			++VisibleWidgets;
+		}
+	}
+
+	const AOBGameMode* OneBulletMode = World ? World->GetAuthGameMode<AOBGameMode>() : nullptr;
+	const AOBWaveManager* WaveManager = OneBulletMode ? OneBulletMode->GetWaveManager() : nullptr;
+	const AOBPanicAudioManager* PanicAudio = OneBulletMode ? OneBulletMode->PanicAudioManager.Get() : nullptr;
+	const AOBGameState* OneBulletState = World ? World->GetGameState<AOBGameState>() : nullptr;
+
+	const int32 PanicAudioComponents = PanicAudio ? PanicAudio->GetActivePanicAudioComponentCount() : 0;
+	const int32 HeartbeatComponents = PanicAudio ? PanicAudio->GetActiveHeartbeatComponentCount() : 0;
+	const int32 RoarComponents = PanicAudio ? PanicAudio->GetActiveRoarComponentCount() : 0;
+	const int32 FootstepComponents = PanicAudio ? PanicAudio->GetActiveFootstepComponentCount() : 0;
+	const int32 MusicComponents = PanicAudio ? PanicAudio->GetActiveBackgroundMusicComponentCount() : 0;
+
+	return FString::Printf(
+		TEXT("[OB PERF] FPS=%.1f Frame=%.2fms | Player HasBullet=%s Panic=%s | Enemies alive=%d totalActors=%d fast=%d heavy=%d AIControllers=%d | Audio panicComponents=%d heartbeat=%d roar=%d footsteps=%d music=%d worldActiveAudio=%d | Widgets visible=%d total=%d | Wave current=%d alive=%d spawnedThisWave=%d pending=%d heavySpawnedThisWave=%d totalSpawned=%d tracked=%d | Actors pickups=%d bulletTrails=%d vfxDebugApprox=%d spawnWarningVFX=%d spawnWarningLights=%d"),
+		FPS,
+		FrameMs,
+		OneBulletState && OneBulletState->HasBullet() ? TEXT("true") : TEXT("false"),
+		PanicAudio && PanicAudio->IsPanicAudioActive() ? TEXT("true") : TEXT("false"),
+		AliveEnemies,
+		TotalEnemyActors,
+		FastEnemies,
+		HeavyEnemies,
+		ActiveAIControllers,
+		PanicAudioComponents,
+		HeartbeatComponents,
+		RoarComponents,
+		FootstepComponents,
+		MusicComponents,
+		ActiveWorldAudioComponents,
+		VisibleWidgets,
+		TotalWidgets,
+		WaveManager ? WaveManager->CurrentWaveNumber : 0,
+		WaveManager ? WaveManager->LivingEnemyCount : 0,
+		WaveManager ? WaveManager->SpawnedThisWave : 0,
+		WaveManager ? WaveManager->GetPendingSpawnCount() : 0,
+		WaveManager ? WaveManager->HeavyEnemiesSpawnedThisWave : 0,
+		WaveManager ? WaveManager->TotalEnemiesSpawned : 0,
+		WaveManager ? WaveManager->GetTrackedEnemyCount() : 0,
+		BulletPickups,
+		BulletTrails,
+		VFXOrDebugActors,
+		WaveManager ? WaveManager->SpawnWarningVFXSpawned : 0,
+		WaveManager ? WaveManager->SpawnWarningLightsSpawned : 0);
 }
 
 AOBBulletPickup* AOBCharacter::DropBulletAt(const FVector& Location)
