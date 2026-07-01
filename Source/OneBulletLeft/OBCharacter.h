@@ -11,7 +11,6 @@ class UAnimationAsset;
 class UAnimInstance;
 class UParticleSystem;
 class USceneComponent;
-class USpringArmComponent;
 class USoundBase;
 class USkeletalMesh;
 class AOBBulletPickup;
@@ -33,37 +32,19 @@ public:
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
-	TObjectPtr<USpringArmComponent> ThirdPersonSpringArm;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
-	TObjectPtr<UCameraComponent> ThirdPersonCamera;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
 	TObjectPtr<USkeletalMeshComponent> FullBodyShadowMesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Weapon")
 	TObjectPtr<USkeletalMeshComponent> WeaponMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Kick|First Person Visual", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<USkeletalMeshComponent> Player_Leg;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Visual")
 	bool bHideHeadForFirstPerson = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Visual")
 	bool bHideBodyForFirstPersonCameraWeapon = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|View")
-	bool bStartInThirdPerson = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|View")
-	float ThirdPersonCameraDistance = 360.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|View")
-	FVector ThirdPersonCameraOffset = FVector(0.0f, 40.0f, 62.0f);
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|View")
-	bool bThirdPersonCameraLag = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|View")
-	float ThirdPersonCameraLagSpeed = 14.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Controls", meta=(ClampMin="0.05", ClampMax="5.0", UIMin="0.1", UIMax="3.0"))
 	float MouseSensitivity = 1.0f;
@@ -112,9 +93,6 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.1", UIMin="1.7", UIMax="2.3"))
 	float KickPlayRate = 2.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="0.12", UIMax="0.20"))
-	float KickImpactDelay = 0.16f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick", meta=(ClampMin="0.0", UIMin="0.18", UIMax="0.35"))
 	float KickRecoveryTime = 0.24f;
@@ -214,6 +192,48 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
 	TObjectPtr<UAnimationAsset> KickAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
+	TObjectPtr<USkeletalMesh> KickLegMesh;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual")
+	FVector KickLegRelativeLocation = FVector(60.0f, 20.0f, -45.0f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual")
+	FRotator KickLegRelativeRotation = FRotator(0.0f, 0.0f, 0.0f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual")
+	FVector KickLegRelativeScale = FVector(1.0f, 1.0f, 1.0f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual")
+	bool bOverrideKickLegTransformFromVariables = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual")
+	TSubclassOf<AOBCharacter> ExpectedRuntimeCharacterClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual")
+	bool bKickUsesRightLeg = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual", meta=(ClampMin="0.0", UIMin="0.03", UIMax="0.08"))
+	float KickVisualHideEarlyTime = 0.05f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|PlayerLeg")
+	bool bUseFullBodyMeshAsKickSource = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|PlayerLeg")
+	bool bKickVisualCalibrationMode = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|PlayerLeg", meta=(ClampMin="0.05", UIMin="0.25", UIMax="1.0"))
+	float KickVisualCalibrationPlayRate = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|PlayerLeg")
+	TArray<FName> KickVisibleBoneNames = { TEXT("thigh_r"), TEXT("calf_r"), TEXT("foot_r"), TEXT("ball_r") };
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|PlayerLeg")
+	TArray<FName> KickHiddenBoneNames;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Debug")
+	bool bKickVisualDebug = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
 	float KickAnimationDuration = 0.45f;
@@ -350,12 +370,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings")
 	void ConfirmPickupFeedback(const FVector& PickupLocation);
 
-	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|View")
-	void ToggleViewMode();
-
-	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|View")
-	void SetThirdPersonView(bool bUseThirdPerson);
-
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Controls")
 	void SetMouseSensitivity(float NewSensitivity);
 
@@ -379,6 +393,21 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Weapon")
 	FTransform GetCameraWeaponRelativeTransform() const { return CameraWeaponRelativeTransform; }
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Kick|PlayerLeg")
+	void SetPlayerLegRelativeTransform(const FTransform& NewTransform);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Kick|PlayerLeg")
+	void SetPlayerLegRelativeLocation(const FVector& NewLocation);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Kick|PlayerLeg")
+	void SetPlayerLegRelativeRotation(const FRotator& NewRotation);
+
+	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Kick|PlayerLeg")
+	void SetPlayerLegRelativeScale(const FVector& NewScale);
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Kick|PlayerLeg")
+	FTransform GetPlayerLegRelativeTransform() const;
 
 	UFUNCTION(BlueprintCallable, Category="OneBulletSettings|Modes")
 	void ToggleImmortalMode();
@@ -420,9 +449,6 @@ public:
 	void OnPlayerDeath();
 
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
-	void OnPlayerViewModeChanged(bool bNowThirdPerson);
-
-	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
 	void OnPlayerImmortalModeChanged(bool bNowImmortal);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="OneBulletSettings|Events")
@@ -430,9 +456,6 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings")
 	bool IsDead() const { return bDead; }
-
-	UFUNCTION(BlueprintPure, Category="OneBulletSettings|View")
-	bool IsThirdPersonView() const { return bThirdPersonView; }
 
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Modes")
 	bool IsImmortalMode() const { return bImmortalMode; }
@@ -451,7 +474,6 @@ protected:
 	bool bKickReady = true;
 	bool bDodgeReady = true;
 	bool bDodging = false;
-	bool bThirdPersonView = false;
 	bool bImmortalMode = false;
 	bool bWeaponBulletReady = true;
 	bool bKickRecovering = false;
@@ -473,8 +495,11 @@ protected:
 	float RemainingRecoilPitch = 0.0f;
 	float RemainingKickCameraTiltDown = 0.0f;
 	float DefaultFirstPersonFOV = 90.0f;
-	float DefaultThirdPersonFOV = 90.0f;
 	float KickFOVElapsed = 0.0f;
+	FTransform KickLegInitialRelativeTransform = FTransform::Identity;
+	TArray<FName> LastKickMaskHiddenBoneNames;
+	FString LastKickMaskHiddenBoneList;
+	FString LastKickMaskVisibleWhitelist;
 	bool bPlayingActionAnimation = false;
 	UAnimationAsset* ActiveLocomotionAnimation = nullptr;
 
@@ -483,7 +508,7 @@ protected:
 	FTimerHandle FeelStopTimerHandle;
 	FTimerHandle ActionAnimationTimerHandle;
 	FTimerHandle KickRecoveryTimerHandle;
-	FTimerHandle KickImpactTimerHandle;
+	FTimerHandle KickLegAnimationTimerHandle;
 
 	TSubclassOf<UAnimInstance> DefaultPlayerAnimClass;
 
@@ -515,6 +540,8 @@ protected:
 	FVector GetMovementInputDodgeDirection() const;
 	bool EvaluateDodgeDirection(const FVector& Direction, float& OutScore) const;
 	void ConfigurePlayerMesh();
+	void ConfigureKickLeg();
+	void ConfigureFirstPersonBodyVisibility();
 	void HideFirstPersonHead();
 	void ConfigureFullBodyShadowMesh();
 	void ConfigureWeapon();
@@ -526,17 +553,20 @@ protected:
 	void PlayShootEffect();
 	void PlayBulletImpactFeedback(const FHitResult& Hit) const;
 	void PlayWeaponShootAnimation();
+	bool ApplyKickLegOnlyMask();
+	void ResetKickBoneMask();
+	void ShowKickVisualDebugMessage(const FString& Message) const;
+	void PlayKickLegAnimation();
+	void FinishKickLegAnimation();
 	FVector GetBulletVisualStartLocation(const FVector& TraceStart) const;
 	FVector ResolveBulletDropLocationAfterImpact(const FHitResult& Hit) const;
 	void PlayActionAnimation(UAnimationAsset* Animation, float Duration, float PlayRate = 1.0f, bool bUseFullAnimationLength = false);
 	void PlayDeathAnimation();
 	void UpdateSimpleLocomotionAnimation();
 	void RestoreMovementAnimation();
-	void ApplyViewMode();
 	void LoadMouseSensitivity();
 	void SaveMouseSensitivity() const;
 	float GetClampedMouseSensitivity(float Value) const;
-	UCameraComponent* GetShootingCamera() const;
 	void GetCrosshairTrace(FVector& OutTraceStart, FVector& OutTraceEnd) const;
 	AOBBulletPickup* DropBulletAt(const FVector& Location);
 };

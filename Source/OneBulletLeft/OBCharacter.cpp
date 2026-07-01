@@ -1,6 +1,8 @@
 #include "OBCharacter.h"
 
 #include "Animation/AnimSingleNodeInstance.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "Animation/AnimationAsset.h"
 #include "Animation/AnimSequence.h"
 #include "Camera/CameraComponent.h"
@@ -8,12 +10,12 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
-#include "GameFramework/SpringArmComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Particles/ParticleSystem.h"
@@ -34,6 +36,18 @@ bool IsAnimationCompatibleWithMesh(const UAnimationAsset* Animation, const USkel
 	const USkeletalMesh* SkeletalMesh = MeshComponent ? MeshComponent->GetSkeletalMeshAsset() : nullptr;
 	return !Animation || !SkeletalMesh || !Animation->GetSkeleton() || Animation->GetSkeleton() == SkeletalMesh->GetSkeleton();
 }
+
+bool IsDisallowedKickLegMesh(const USkeletalMesh* SkeletalMesh)
+{
+	if (!SkeletalMesh)
+	{
+		return false;
+	}
+
+	const FString MeshPath = SkeletalMesh->GetPathName();
+	return MeshPath == TEXT("/Game/Assets/Player.Player")
+		|| MeshPath.Contains(TEXT("/Characters/Mannequins/Meshes/SKM_Manny"));
+}
 }
 
 AOBCharacter::AOBCharacter()
@@ -50,19 +64,6 @@ AOBCharacter::AOBCharacter()
 	FirstPersonCamera->SetRelativeLocation(FVector(-10.0f, 0.0f, 70.0f));
 	FirstPersonCamera->bUsePawnControlRotation = true;
 
-	ThirdPersonSpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("ThirdPersonSpringArm"));
-	ThirdPersonSpringArm->SetupAttachment(GetCapsuleComponent());
-	ThirdPersonSpringArm->bUsePawnControlRotation = true;
-	ThirdPersonSpringArm->TargetArmLength = ThirdPersonCameraDistance;
-	ThirdPersonSpringArm->SocketOffset = ThirdPersonCameraOffset;
-	ThirdPersonSpringArm->bEnableCameraLag = bThirdPersonCameraLag;
-	ThirdPersonSpringArm->CameraLagSpeed = ThirdPersonCameraLagSpeed;
-
-	ThirdPersonCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("ThirdPersonCamera"));
-	ThirdPersonCamera->SetupAttachment(ThirdPersonSpringArm, USpringArmComponent::SocketName);
-	ThirdPersonCamera->bUsePawnControlRotation = false;
-	ThirdPersonCamera->SetActive(false);
-
 	FullBodyShadowMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("FullBodyShadowMesh"));
 	FullBodyShadowMesh->SetupAttachment(GetCapsuleComponent());
 
@@ -70,10 +71,23 @@ AOBCharacter::AOBCharacter()
 	WeaponMesh->SetupAttachment(FirstPersonCamera);
 	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
+	Player_Leg = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Player_Leg"));
+	Player_Leg->SetupAttachment(FirstPersonCamera);
+	Player_Leg->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Player_Leg->SetOnlyOwnerSee(true);
+	Player_Leg->SetOwnerNoSee(false);
+	Player_Leg->SetCastShadow(false);
+
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> DefaultWeapon(TEXT("/Game/Weapons/GrenadeLauncher/Meshes/SK_GrenadeLauncher.SK_GrenadeLauncher"));
 	if (DefaultWeapon.Succeeded())
 	{
 		WeaponModel = DefaultWeapon.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UAnimationAsset> DefaultKickLegAnimation(TEXT("/Game/Assets/Animations/KickingLeg_Anim.KickingLeg_Anim"));
+	if (DefaultKickLegAnimation.Succeeded())
+	{
+		KickAnimation = DefaultKickLegAnimation.Object;
 	}
 
 	static ConstructorHelpers::FObjectFinder<UParticleSystem> DefaultShootEffect(TEXT("/Game/MilitaryWeapDark/FX/P_Grenade_MuzzleFlash_01.P_Grenade_MuzzleFlash_01"));
@@ -102,12 +116,15 @@ AOBCharacter::AOBCharacter()
 
 	ConfigurePlayerMesh();
 	ConfigureFullBodyShadowMesh();
+	ConfigureFirstPersonBodyVisibility();
+	ConfigureKickLeg();
 	ConfigureWeapon();
 }
 
 void AOBCharacter::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
+	ConfigureKickLeg();
 	ConfigureWeapon();
 	ApplyWeaponReadyTransform(true);
 }
@@ -121,16 +138,39 @@ void AOBCharacter::BeginPlay()
 	{
 		DefaultFirstPersonFOV = FirstPersonCamera->FieldOfView;
 	}
-	if (ThirdPersonCamera)
-	{
-		DefaultThirdPersonFOV = ThirdPersonCamera->FieldOfView;
-	}
 	if (GetMesh())
 	{
 		DefaultPlayerAnimClass = GetMesh()->GetAnimClass();
 		ConfigureFullBodyShadowMesh();
+		ConfigureFirstPersonBodyVisibility();
 	}
 	ConfigureWeapon();
+	ConfigureKickLeg();
+	if (Player_Leg)
+	{
+		KickLegInitialRelativeTransform = Player_Leg->GetRelativeTransform();
+		UE_LOG(
+			LogTemp,
+			Log,
+			TEXT("Kick visual BeginPlay: CharacterClass=%s ExpectedRuntimeCharacterClass=%s Player_Leg=%s Parent=%s bOverrideKickLegTransformFromVariables=%s bKickVisualCalibrationMode=%s InitialRelativeTransform=%s WorldTransform=%s"),
+			*GetClass()->GetName(),
+			*GetNameSafe(ExpectedRuntimeCharacterClass.Get()),
+			*GetNameSafe(Player_Leg),
+			*GetNameSafe(Player_Leg->GetAttachParent()),
+			bOverrideKickLegTransformFromVariables ? TEXT("true") : TEXT("false"),
+			bKickVisualCalibrationMode ? TEXT("true") : TEXT("false"),
+			*KickLegInitialRelativeTransform.ToHumanReadableString(),
+			*Player_Leg->GetComponentTransform().ToHumanReadableString());
+
+		if (ExpectedRuntimeCharacterClass && !IsA(ExpectedRuntimeCharacterClass))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Kick visual BeginPlay: Runtime character class %s is not using expected BP class %s."), *GetClass()->GetName(), *GetNameSafe(ExpectedRuntimeCharacterClass.Get()));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Kick visual BeginPlay: Player_Leg component was not found on %s."), *GetName());
+	}
 
 	if (AOBGameState* OneBulletState = GetWorld()->GetGameState<AOBGameState>())
 	{
@@ -138,10 +178,17 @@ void AOBCharacter::BeginPlay()
 		OneBulletState->SetGameOver(false);
 	}
 
-	bThirdPersonView = bStartInThirdPerson;
 	bImmortalMode = bStartImmortal;
 	SetWeaponBulletReady(true, true);
-	ApplyViewMode();
+	if (FirstPersonCamera)
+	{
+		FirstPersonCamera->SetActive(true);
+	}
+	if (GetMesh())
+	{
+		ConfigureFirstPersonBodyVisibility();
+		HideFirstPersonHead();
+	}
 }
 
 void AOBCharacter::Tick(float DeltaSeconds)
@@ -178,7 +225,6 @@ void AOBCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	{
 		PlayerInputComponent->BindKey(SecondaryDodgeKey, IE_Pressed, this, &AOBCharacter::Dodge);
 	}
-	PlayerInputComponent->BindKey(EKeys::One, IE_Pressed, this, &AOBCharacter::ToggleViewMode);
 	PlayerInputComponent->BindKey(EKeys::Two, IE_Pressed, this, &AOBCharacter::ToggleImmortalMode);
 	PlayerInputComponent->BindKey(EKeys::Three, IE_Pressed, this, &AOBCharacter::ToggleMouseSensitivityUI);
 	PlayerInputComponent->BindKey(EKeys::LeftBracket, IE_Pressed, this, &AOBCharacter::DecreaseMouseSensitivity);
@@ -385,10 +431,10 @@ void AOBCharacter::Kick()
 	bKickRecovering = true;
 	GetWorldTimerManager().SetTimer(KickCooldownTimerHandle, this, &AOBCharacter::ResetKick, KickCooldown, false);
 	GetWorldTimerManager().SetTimer(KickRecoveryTimerHandle, this, &AOBCharacter::FinishKickRecovery, FMath::Max(KickRecoveryTime, 0.01f), false);
-	GetWorldTimerManager().SetTimer(KickImpactTimerHandle, this, &AOBCharacter::ApplyKickImpact, KickImpactDelay, false);
-	PlayActionAnimation(KickAnimation, KickAnimationDuration, KickPlayRate, true);
+	PlayKickLegAnimation();
 	StartKickWeaponSway();
 	PlayKickStartFeedback();
+	ApplyKickImpact();
 }
 
 void AOBCharacter::ApplyKickImpact()
@@ -398,13 +444,16 @@ void AOBCharacter::ApplyKickImpact()
 		return;
 	}
 
-	FVector PushForward = GetActorForwardVector().GetSafeNormal2D();
+	const UCameraComponent* KickCamera = FirstPersonCamera;
+	FVector PushForward = KickCamera ? KickCamera->GetForwardVector().GetSafeNormal2D() : GetActorForwardVector().GetSafeNormal2D();
 	if (PushForward.IsNearlyZero())
 	{
 		PushForward = FVector::ForwardVector;
 	}
-	const FVector Start = GetActorLocation() + FVector::UpVector * 45.0f;
+	const FVector CameraLocation = KickCamera ? KickCamera->GetComponentLocation() : GetActorLocation() + FVector::UpVector * 45.0f;
+	const FVector Start = CameraLocation + PushForward * 20.0f - FVector::UpVector * 30.0f;
 	const FVector End = Start + PushForward * KickTraceDistance;
+	const float MinForwardDot = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(KickConeAngleDegrees, 1.0f, 180.0f) * 0.5f));
 
 	TArray<AOBEnemy*> HitEnemies;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(OneBulletKick), false, this);
@@ -416,6 +465,12 @@ void AOBCharacter::ApplyKickImpact()
 	{
 		AOBEnemy* Enemy = Cast<AOBEnemy>(Hit.GetActor());
 		if (!Enemy || Enemy->IsDead())
+		{
+			continue;
+		}
+
+		const FVector DirectionToEnemy = (Enemy->GetActorLocation() - Start).GetSafeNormal2D();
+		if (DirectionToEnemy.IsNearlyZero() || FVector::DotProduct(PushForward, DirectionToEnemy) < MinForwardDot)
 		{
 			continue;
 		}
@@ -442,7 +497,7 @@ void AOBCharacter::ApplyKickImpact()
 
 	const int32 HitEnemyCount = HitEnemies.Num();
 	PlayKickImpactFeedback(GetActorLocation(), PushForward, HitEnemyCount);
-	if (KickImpactHitStopDuration > KINDA_SMALL_NUMBER)
+	if (HitEnemyCount > 0 && KickImpactHitStopDuration > KINDA_SMALL_NUMBER)
 	{
 		ApplyFeelStop(KickImpactHitStopDuration);
 	}
@@ -502,23 +557,6 @@ void AOBCharacter::ConfirmPickupFeedback(const FVector& PickupLocation)
 	ApplyFeelStop(PickupStopDuration);
 }
 
-void AOBCharacter::ToggleViewMode()
-{
-	SetThirdPersonView(!bThirdPersonView);
-}
-
-void AOBCharacter::SetThirdPersonView(bool bUseThirdPerson)
-{
-	if (bThirdPersonView == bUseThirdPerson)
-	{
-		return;
-	}
-
-	bThirdPersonView = bUseThirdPerson;
-	ApplyViewMode();
-	OnPlayerViewModeChanged(bThirdPersonView);
-}
-
 void AOBCharacter::SetCameraWeaponRelativeTransform(const FTransform& NewTransform)
 {
 	CameraWeaponRelativeTransform = NewTransform;
@@ -526,6 +564,57 @@ void AOBCharacter::SetCameraWeaponRelativeTransform(const FTransform& NewTransfo
 	{
 		ApplyWeaponReadyTransform(true);
 	}
+}
+
+void AOBCharacter::SetPlayerLegRelativeTransform(const FTransform& NewTransform)
+{
+	bOverrideKickLegTransformFromVariables = true;
+	KickLegRelativeLocation = NewTransform.GetLocation();
+	KickLegRelativeRotation = NewTransform.GetRotation().Rotator();
+	KickLegRelativeScale = NewTransform.GetScale3D();
+	if (Player_Leg)
+	{
+		Player_Leg->SetRelativeTransform(NewTransform);
+		KickLegInitialRelativeTransform = Player_Leg->GetRelativeTransform();
+	}
+}
+
+void AOBCharacter::SetPlayerLegRelativeLocation(const FVector& NewLocation)
+{
+	bOverrideKickLegTransformFromVariables = true;
+	KickLegRelativeLocation = NewLocation;
+	if (Player_Leg)
+	{
+		Player_Leg->SetRelativeLocation(KickLegRelativeLocation);
+		KickLegInitialRelativeTransform = Player_Leg->GetRelativeTransform();
+	}
+}
+
+void AOBCharacter::SetPlayerLegRelativeRotation(const FRotator& NewRotation)
+{
+	bOverrideKickLegTransformFromVariables = true;
+	KickLegRelativeRotation = NewRotation;
+	if (Player_Leg)
+	{
+		Player_Leg->SetRelativeRotation(KickLegRelativeRotation);
+		KickLegInitialRelativeTransform = Player_Leg->GetRelativeTransform();
+	}
+}
+
+void AOBCharacter::SetPlayerLegRelativeScale(const FVector& NewScale)
+{
+	bOverrideKickLegTransformFromVariables = true;
+	KickLegRelativeScale = NewScale;
+	if (Player_Leg)
+	{
+		Player_Leg->SetRelativeScale3D(KickLegRelativeScale);
+		KickLegInitialRelativeTransform = Player_Leg->GetRelativeTransform();
+	}
+}
+
+FTransform AOBCharacter::GetPlayerLegRelativeTransform() const
+{
+	return Player_Leg ? Player_Leg->GetRelativeTransform() : FTransform(KickLegRelativeRotation, KickLegRelativeLocation, KickLegRelativeScale);
 }
 
 void AOBCharacter::ToggleImmortalMode()
@@ -581,9 +670,10 @@ void AOBCharacter::ResetForNewRun(const FVector& SpawnLocation, const FRotator& 
 
 	GetWorldTimerManager().ClearTimer(KickCooldownTimerHandle);
 	GetWorldTimerManager().ClearTimer(KickRecoveryTimerHandle);
-	GetWorldTimerManager().ClearTimer(KickImpactTimerHandle);
+	GetWorldTimerManager().ClearTimer(KickLegAnimationTimerHandle);
 	GetWorldTimerManager().ClearTimer(DodgeCooldownTimerHandle);
 	GetWorldTimerManager().ClearTimer(ActionAnimationTimerHandle);
+	FinishKickLegAnimation();
 	RestoreMovementAnimation();
 	ResetFeelStop();
 
@@ -631,8 +721,9 @@ void AOBCharacter::DieWithReason(const FText& DeathReason)
 	ActiveKickDashPreviousAlpha = 0.0f;
 	ActiveKickWeaponSwayElapsed = 0.0f;
 	RemainingKickCameraTiltDown = 0.0f;
+	GetWorldTimerManager().ClearTimer(KickLegAnimationTimerHandle);
+	FinishKickLegAnimation();
 	GetWorldTimerManager().ClearTimer(KickRecoveryTimerHandle);
-	GetWorldTimerManager().ClearTimer(KickImpactTimerHandle);
 	GetCharacterMovement()->DisableMovement();
 	PlayDeathAnimation();
 	OnPlayerDeath();
@@ -799,10 +890,6 @@ void AOBCharacter::UpdateKickFOVPunch(float DeltaSeconds)
 	{
 		FirstPersonCamera->SetFieldOfView(DefaultFirstPersonFOV + CurrentOffset);
 	}
-	if (ThirdPersonCamera)
-	{
-		ThirdPersonCamera->SetFieldOfView(DefaultThirdPersonFOV + CurrentOffset);
-	}
 
 	if (Alpha < 1.0f)
 	{
@@ -854,14 +941,15 @@ void AOBCharacter::StartKickWeaponSway()
 
 void AOBCharacter::PlayKickStartFeedback()
 {
-	if (KickWhooshSound)
+	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, KickWhooshSound, GetActorLocation());
+		if (KickCameraShake && PlayerController->PlayerCameraManager)
+		{
+			PlayerController->PlayerCameraManager->StartCameraShake(KickCameraShake);
+		}
 	}
-	else if (KickSound)
-	{
-		UGameplayStatics::PlaySoundAtLocation(this, KickSound, GetActorLocation());
-	}
+
+	StartKickFOVPunch();
 
 	if (Controller && KickCameraTiltDownAmount > KINDA_SMALL_NUMBER)
 	{
@@ -874,6 +962,19 @@ void AOBCharacter::PlayKickImpactFeedback(const FVector& Origin, const FVector& 
 {
 	const FVector SafeDirection = Direction.GetSafeNormal2D();
 	const FVector EffectLocation = Origin + SafeDirection * 85.0f - FVector::UpVector * 35.0f;
+
+	if (HitEnemyCount <= 0)
+	{
+		if (KickWhooshSound)
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, KickWhooshSound, GetActorLocation());
+		}
+		else if (KickSound)
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, KickSound, GetActorLocation());
+		}
+		return;
+	}
 
 	if (KickImpactSound)
 	{
@@ -894,16 +995,6 @@ void AOBCharacter::PlayKickImpactFeedback(const FVector& Origin, const FVector& 
 			true,
 			EPSCPoolMethod::AutoRelease);
 	}
-
-	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
-	{
-		if (KickCameraShake && PlayerController->PlayerCameraManager)
-		{
-			PlayerController->PlayerCameraManager->StartCameraShake(KickCameraShake);
-		}
-	}
-
-	StartKickFOVPunch();
 
 	if (Controller)
 	{
@@ -1084,7 +1175,9 @@ void AOBCharacter::ConfigurePlayerMesh()
 	GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -96.0f));
 	GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
 	GetMesh()->SetRelativeScale3D(FVector(1.0f));
-	GetMesh()->SetOwnerNoSee(false);
+	GetMesh()->SetOwnerNoSee(true);
+	GetMesh()->SetHiddenInGame(true);
+	GetMesh()->SetVisibility(false, true);
 
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> MannyMesh(TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
 	if (MannyMesh.Succeeded())
@@ -1099,10 +1192,69 @@ void AOBCharacter::ConfigurePlayerMesh()
 		GetMesh()->SetAnimInstanceClass(UnarmedAnimBP.Class);
 	}
 
-	static ConstructorHelpers::FObjectFinder<UAnimSequence> DefaultKickAnimation(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_01.MM_Attack_01"));
-	if (DefaultKickAnimation.Succeeded())
+	if (!KickAnimation)
 	{
-		KickAnimation = DefaultKickAnimation.Object;
+		static ConstructorHelpers::FObjectFinder<UAnimationAsset> DefaultKickAnimation(TEXT("/Game/Assets/Animations/KickingLeg_Anim.KickingLeg_Anim"));
+		if (DefaultKickAnimation.Succeeded())
+		{
+			KickAnimation = DefaultKickAnimation.Object;
+		}
+	}
+}
+
+void AOBCharacter::ConfigureFirstPersonBodyVisibility()
+{
+	if (!GetMesh())
+	{
+		return;
+	}
+
+	GetMesh()->SetOwnerNoSee(true);
+	GetMesh()->SetHiddenInGame(true);
+	GetMesh()->SetVisibility(false, true);
+	GetMesh()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+}
+
+void AOBCharacter::ConfigureKickLeg()
+{
+	if (!Player_Leg)
+	{
+		return;
+	}
+
+	if (FirstPersonCamera && Player_Leg->GetAttachParent() != FirstPersonCamera)
+	{
+		Player_Leg->AttachToComponent(FirstPersonCamera, FAttachmentTransformRules::KeepRelativeTransform);
+	}
+
+	if (bOverrideKickLegTransformFromVariables)
+	{
+		Player_Leg->SetRelativeLocation(KickLegRelativeLocation);
+		Player_Leg->SetRelativeRotation(KickLegRelativeRotation);
+		Player_Leg->SetRelativeScale3D(KickLegRelativeScale);
+	}
+	Player_Leg->BoundsScale = 10.0f;
+	Player_Leg->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+	Player_Leg->PrimaryComponentTick.SetTickFunctionEnable(true);
+	Player_Leg->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Player_Leg->SetOnlyOwnerSee(true);
+	Player_Leg->SetOwnerNoSee(false);
+	Player_Leg->SetCastShadow(false);
+	const bool bIsGameWorld = GetWorld() && GetWorld()->IsGameWorld();
+	Player_Leg->SetHiddenInGame(bIsGameWorld && !bKickVisualCalibrationMode);
+	Player_Leg->SetVisibility(!bIsGameWorld || bKickVisualCalibrationMode, true);
+
+	if (KickLegMesh)
+	{
+		Player_Leg->SetSkeletalMesh(KickLegMesh);
+	}
+	else if (bUseFullBodyMeshAsKickSource && GetMesh() && GetMesh()->GetSkeletalMeshAsset())
+	{
+		Player_Leg->SetSkeletalMesh(GetMesh()->GetSkeletalMeshAsset());
+	}
+	else if (!Player_Leg->GetSkeletalMeshAsset())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Player_Leg is configured but no first-person leg SkeletalMesh is assigned. Set KickLegMesh or the Player_Leg component mesh in Blueprint."));
 	}
 }
 
@@ -1295,6 +1447,295 @@ void AOBCharacter::PlayWeaponShootAnimation()
 
 	WeaponMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
 	WeaponMesh->PlayAnimation(WeaponShootAnimation, false);
+}
+
+bool AOBCharacter::ApplyKickLegOnlyMask()
+{
+	if (!Player_Leg)
+	{
+		return false;
+	}
+
+	LastKickMaskHiddenBoneNames.Reset();
+	LastKickMaskHiddenBoneList.Reset();
+	LastKickMaskVisibleWhitelist.Reset();
+
+	USkeletalMesh* CurrentLegMesh = Player_Leg->GetSkeletalMeshAsset();
+	if (!CurrentLegMesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ApplyKickLegOnlyMask called but Player_Leg has no skeletal mesh."));
+		return false;
+	}
+
+	const TArray<FName> KickingLegBones = bKickUsesRightLeg
+		? TArray<FName>{ TEXT("thigh_r"), TEXT("calf_r"), TEXT("foot_r"), TEXT("ball_r") }
+		: TArray<FName>{ TEXT("thigh_l"), TEXT("calf_l"), TEXT("foot_l"), TEXT("ball_l") };
+
+	TSet<FName> VisibleBoneWhitelist;
+	VisibleBoneWhitelist.Add(TEXT("root"));
+	VisibleBoneWhitelist.Add(TEXT("pelvis"));
+	for (const FName& BoneName : KickingLegBones)
+	{
+		VisibleBoneWhitelist.Add(BoneName);
+	}
+
+	LastKickMaskVisibleWhitelist = FString::JoinBy(
+		VisibleBoneWhitelist,
+		TEXT(", "),
+		[](const FName& Name)
+		{
+			return Name.ToString();
+		});
+
+	const FReferenceSkeleton& ReferenceSkeleton = CurrentLegMesh->GetRefSkeleton();
+	for (int32 BoneIndex = 0; BoneIndex < ReferenceSkeleton.GetNum(); ++BoneIndex)
+	{
+		const FName BoneName = ReferenceSkeleton.GetBoneName(BoneIndex);
+		if (BoneName.IsNone() || VisibleBoneWhitelist.Contains(BoneName))
+		{
+			continue;
+		}
+
+		Player_Leg->HideBoneByName(BoneName, EPhysBodyOp::PBO_None);
+		LastKickMaskHiddenBoneNames.Add(BoneName);
+	}
+
+	LastKickMaskHiddenBoneList = FString::JoinBy(
+		LastKickMaskHiddenBoneNames,
+		TEXT(", "),
+		[](const FName& Name)
+		{
+			return Name.ToString();
+		});
+	KickVisibleBoneNames = KickingLegBones;
+	KickHiddenBoneNames = LastKickMaskHiddenBoneNames;
+
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("ApplyKickLegOnlyMask called. KickUsesRightLeg=%s Hidden bones count=%d Hidden bones list=%s Visible leg whitelist=%s KickVisualHideEarlyTime=%.3f"),
+		bKickUsesRightLeg ? TEXT("true") : TEXT("false"),
+		LastKickMaskHiddenBoneNames.Num(),
+		*LastKickMaskHiddenBoneList,
+		*LastKickMaskVisibleWhitelist,
+		KickVisualHideEarlyTime);
+
+	ShowKickVisualDebugMessage(FString::Printf(TEXT("Kick mask applied: %s leg only"), bKickUsesRightLeg ? TEXT("right") : TEXT("left")));
+	ShowKickVisualDebugMessage(FString::Printf(TEXT("Hidden bones: %d"), LastKickMaskHiddenBoneNames.Num()));
+	ShowKickVisualDebugMessage(FString::Printf(TEXT("Hide early: %.2fs"), KickVisualHideEarlyTime));
+
+	return LastKickMaskHiddenBoneNames.Num() > 0;
+}
+
+void AOBCharacter::ResetKickBoneMask()
+{
+	if (!Player_Leg)
+	{
+		return;
+	}
+
+	for (const FName& BoneName : LastKickMaskHiddenBoneNames)
+	{
+		if (!BoneName.IsNone() && Player_Leg->GetBoneIndex(BoneName) != INDEX_NONE)
+		{
+			Player_Leg->UnHideBoneByName(BoneName);
+		}
+	}
+	LastKickMaskHiddenBoneNames.Reset();
+	LastKickMaskHiddenBoneList.Reset();
+}
+
+void AOBCharacter::ShowKickVisualDebugMessage(const FString& Message) const
+{
+	if (bKickVisualDebug && GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, Message);
+	}
+}
+
+void AOBCharacter::PlayKickLegAnimation()
+{
+	UE_LOG(LogTemp, Log, TEXT("Kick input pressed"));
+	if (!Player_Leg)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Kick input pressed but Player_Leg component was not found on %s."), *GetName());
+		ShowKickVisualDebugMessage(TEXT("Kick anim not visible: no Player_Leg component"));
+		return;
+	}
+
+	const FTransform RelativeTransformBeforeConfigure = Player_Leg->GetRelativeTransform();
+	ConfigureKickLeg();
+	const FTransform RelativeTransformAfterConfigure = Player_Leg->GetRelativeTransform();
+	UE_LOG(LogTemp, Log, TEXT("Kick input: Player_Leg component found: %s."), *GetNameSafe(Player_Leg));
+
+	USkeletalMesh* CurrentLegMesh = Player_Leg->GetSkeletalMeshAsset();
+	if (!CurrentLegMesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Kick input pressed but Player_Leg has no first-person leg SkeletalMesh assigned. Set KickLegMesh or Player_Leg mesh in Blueprint."));
+		ShowKickVisualDebugMessage(TEXT("Kick anim not visible: no skeletal mesh"));
+		return;
+	}
+	UE_LOG(LogTemp, Log, TEXT("Kick input: Player_Leg SkeletalMesh assigned: %s."), *GetNameSafe(CurrentLegMesh));
+	if (IsDisallowedKickLegMesh(CurrentLegMesh))
+	{
+		if (!bUseFullBodyMeshAsKickSource)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Player_Leg uses full-body mesh and bUseFullBodyMeshAsKickSource is disabled. Current mesh: %s"), *CurrentLegMesh->GetPathName());
+			ShowKickVisualDebugMessage(TEXT("Kick anim not visible: full-body mesh blocked"));
+			return;
+		}
+		UE_LOG(LogTemp, Warning, TEXT("Player_Leg uses full-body mesh as animation source. Applying first-person kick bone mask. Current mesh: %s"), *CurrentLegMesh->GetPathName());
+	}
+
+	if (!KickAnimation)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Kick input pressed but KickingLeg_Anim / KickAnimation is not assigned."));
+		ShowKickVisualDebugMessage(TEXT("Kick anim not visible: anim not assigned"));
+		return;
+	}
+	UE_LOG(LogTemp, Log, TEXT("Kick input: KickingLeg_Anim assigned: %s."), *GetNameSafe(KickAnimation));
+
+	const USkeleton* LegSkeleton = CurrentLegMesh->GetSkeleton();
+	const USkeleton* AnimSkeleton = KickAnimation->GetSkeleton();
+	const bool bSkeletonCompatible = IsAnimationCompatibleWithMesh(KickAnimation, Player_Leg);
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("Kick input: Player_Leg skeleton=%s KickingLeg_Anim skeleton=%s Skeleton compatible=%s."),
+		*GetNameSafe(LegSkeleton),
+		*GetNameSafe(AnimSkeleton),
+		bSkeletonCompatible ? TEXT("true") : TEXT("false"));
+
+	if (!bSkeletonCompatible)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Player_Leg mesh skeleton does not match KickingLeg_Anim skeleton. Kick visual skipped because assets are invalid."));
+		ShowKickVisualDebugMessage(TEXT("Kick anim not visible: skeleton mismatch"));
+		return;
+	}
+
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("Kick input: bOverrideKickLegTransformFromVariables=%s KickLegRelativeLocation=%s KickLegRelativeRotation=%s KickLegRelativeScale=%s"),
+		bOverrideKickLegTransformFromVariables ? TEXT("true") : TEXT("false"),
+		*KickLegRelativeLocation.ToCompactString(),
+		*KickLegRelativeRotation.ToCompactString(),
+		*KickLegRelativeScale.ToCompactString());
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("Kick input: Player_Leg=%s Parent=%s Mesh=%s Anim=%s RelativeBeforeConfigure=%s RelativeAfterConfigure=%s InitialRelativeTransform=%s WorldTransform=%s"),
+		*GetNameSafe(Player_Leg),
+		*GetNameSafe(Player_Leg->GetAttachParent()),
+		*GetNameSafe(CurrentLegMesh),
+		*GetNameSafe(KickAnimation),
+		*RelativeTransformBeforeConfigure.ToHumanReadableString(),
+		*RelativeTransformAfterConfigure.ToHumanReadableString(),
+		*KickLegInitialRelativeTransform.ToHumanReadableString(),
+		*Player_Leg->GetComponentTransform().ToHumanReadableString());
+
+	const bool bWasHiddenBeforeShow = Player_Leg->bHiddenInGame;
+	Player_Leg->SetHiddenInGame(false);
+	Player_Leg->SetVisibility(true, true);
+	Player_Leg->SetComponentTickEnabled(true);
+	Player_Leg->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+	const bool bBoneMaskApplied = ApplyKickLegOnlyMask();
+	UE_LOG(LogTemp, Log, TEXT("Kick visual: Player_Leg hidden before show=%s visible after show=%s Bone mask applied=%s Hidden bones count=%d Visible leg whitelist=%s"),
+		bWasHiddenBeforeShow ? TEXT("true") : TEXT("false"),
+		Player_Leg->IsVisible() && !Player_Leg->bHiddenInGame ? TEXT("true") : TEXT("false"),
+		bBoneMaskApplied ? TEXT("true") : TEXT("false"),
+		LastKickMaskHiddenBoneNames.Num(),
+		*LastKickMaskVisibleWhitelist);
+
+	if (UAnimMontage* KickMontage = Cast<UAnimMontage>(KickAnimation))
+	{
+		Player_Leg->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+		if (UAnimInstance* LegAnimInstance = Player_Leg->GetAnimInstance())
+		{
+			const float PlayedDuration = LegAnimInstance->Montage_Play(KickMontage, FMath::Max(KickPlayRate, 0.01f));
+			if (PlayedDuration > 0.0f)
+			{
+				UE_LOG(LogTemp, Log, TEXT("Started first-person kick montage %s on Player_Leg."), *GetNameSafe(KickMontage));
+				GetWorldTimerManager().ClearTimer(KickLegAnimationTimerHandle);
+				const float HideDelay = FMath::Max(0.01f, PlayedDuration - FMath::Max(KickVisualHideEarlyTime, 0.0f));
+				if (!bKickVisualCalibrationMode)
+				{
+					GetWorldTimerManager().SetTimer(
+						KickLegAnimationTimerHandle,
+						this,
+						&AOBCharacter::FinishKickLegAnimation,
+						HideDelay,
+						false);
+				}
+				UE_LOG(LogTemp, Log, TEXT("Kick visual: Animation mode=Montage Animation length=%.2f KickVisualHideEarlyTime=%.2f Actual hide delay=%.2f Animation started on Player_Leg=true Player_Leg will hide after %.2f seconds"),
+					PlayedDuration,
+					KickVisualHideEarlyTime,
+					bKickVisualCalibrationMode ? -1.0f : HideDelay,
+					bKickVisualCalibrationMode ? -1.0f : HideDelay);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Failed to start first-person kick montage %s on Player_Leg."), *GetNameSafe(KickMontage));
+				ShowKickVisualDebugMessage(TEXT("Kick anim not visible: anim not started"));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("KickingLeg_Anim is a montage, but Player_Leg has no AnimInstance to play it."));
+			ShowKickVisualDebugMessage(TEXT("Kick anim not visible: no Player_Leg AnimInstance"));
+		}
+		return;
+	}
+
+	Player_Leg->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+	Player_Leg->PlayAnimation(KickAnimation, bKickVisualCalibrationMode);
+	if (UAnimSingleNodeInstance* SingleNodeInstance = Player_Leg->GetSingleNodeInstance())
+	{
+		SingleNodeInstance->SetPlayRate(FMath::Max(bKickVisualCalibrationMode ? KickVisualCalibrationPlayRate : KickPlayRate, 0.01f));
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Started first-person kick animation %s on Player_Leg."), *GetNameSafe(KickAnimation));
+
+	const float BaseDuration = FMath::Max(KickAnimationDuration, KickAnimation->GetPlayLength());
+	const float ScaledDuration = BaseDuration / FMath::Max(bKickVisualCalibrationMode ? KickVisualCalibrationPlayRate : KickPlayRate, 0.01f);
+	const float HideDelay = FMath::Max(0.01f, ScaledDuration - FMath::Max(KickVisualHideEarlyTime, 0.0f));
+	GetWorldTimerManager().ClearTimer(KickLegAnimationTimerHandle);
+	if (!bKickVisualCalibrationMode)
+	{
+		GetWorldTimerManager().SetTimer(
+			KickLegAnimationTimerHandle,
+			this,
+			&AOBCharacter::FinishKickLegAnimation,
+			HideDelay,
+			false);
+	}
+	UE_LOG(LogTemp, Log, TEXT("Kick visual: Animation mode=SingleNode Animation length=%.2f KickVisualHideEarlyTime=%.2f Actual hide delay=%.2f Animation started on Player_Leg=true Player_Leg will hide after %.2f seconds"),
+		ScaledDuration,
+		KickVisualHideEarlyTime,
+		bKickVisualCalibrationMode ? -1.0f : HideDelay,
+		bKickVisualCalibrationMode ? -1.0f : HideDelay);
+}
+
+void AOBCharacter::FinishKickLegAnimation()
+{
+	if (Player_Leg)
+	{
+		if (bKickVisualCalibrationMode)
+		{
+			ApplyKickLegOnlyMask();
+			Player_Leg->SetHiddenInGame(false);
+			Player_Leg->SetVisibility(true, true);
+			return;
+		}
+		Player_Leg->SetHiddenInGame(true);
+		Player_Leg->SetVisibility(false, true);
+		UE_LOG(
+			LogTemp,
+			Log,
+			TEXT("Kick visual: Player_Leg hidden before ref pose reset: %s"),
+			Player_Leg->bHiddenInGame ? TEXT("true") : TEXT("false"));
+		ResetKickBoneMask();
+	}
 }
 
 FVector AOBCharacter::GetBulletVisualStartLocation(const FVector& TraceStart) const
@@ -1501,42 +1942,6 @@ void AOBCharacter::RestoreMovementAnimation()
 	}
 }
 
-void AOBCharacter::ApplyViewMode()
-{
-	if (!FirstPersonCamera || !ThirdPersonCamera || !ThirdPersonSpringArm)
-	{
-		return;
-	}
-
-	ThirdPersonSpringArm->TargetArmLength = ThirdPersonCameraDistance;
-	ThirdPersonSpringArm->SocketOffset = ThirdPersonCameraOffset;
-	ThirdPersonSpringArm->bEnableCameraLag = bThirdPersonCameraLag;
-	ThirdPersonSpringArm->CameraLagSpeed = ThirdPersonCameraLagSpeed;
-	FirstPersonCamera->SetActive(!bThirdPersonView);
-	ThirdPersonCamera->SetActive(bThirdPersonView);
-
-	if (!GetMesh())
-	{
-		return;
-	}
-
-	GetMesh()->SetOwnerNoSee(!bThirdPersonView && bAttachWeaponToCamera && bHideBodyForFirstPersonCameraWeapon);
-
-	if (!IsLocallyControlled())
-	{
-		return;
-	}
-
-	if (bThirdPersonView)
-	{
-		GetMesh()->UnHideBoneByName(TEXT("head"));
-	}
-	else if (!bAttachWeaponToCamera || !bHideBodyForFirstPersonCameraWeapon)
-	{
-		HideFirstPersonHead();
-	}
-}
-
 void AOBCharacter::LoadMouseSensitivity()
 {
 	float SavedSensitivity = MouseSensitivity;
@@ -1567,16 +1972,10 @@ float AOBCharacter::GetClampedMouseSensitivity(float Value) const
 	return FMath::Clamp(RoundedValue, MinSensitivity, MaxSensitivity);
 }
 
-UCameraComponent* AOBCharacter::GetShootingCamera() const
-{
-	return bThirdPersonView && ThirdPersonCamera ? ThirdPersonCamera : FirstPersonCamera;
-}
-
 void AOBCharacter::GetCrosshairTrace(FVector& OutTraceStart, FVector& OutTraceEnd) const
 {
-	const UCameraComponent* ShootingCamera = GetShootingCamera();
-	OutTraceStart = ShootingCamera ? ShootingCamera->GetComponentLocation() : GetActorLocation();
-	FVector AimDirection = ShootingCamera ? ShootingCamera->GetForwardVector() : GetActorForwardVector();
+	OutTraceStart = FirstPersonCamera ? FirstPersonCamera->GetComponentLocation() : GetActorLocation();
+	FVector AimDirection = FirstPersonCamera ? FirstPersonCamera->GetForwardVector() : GetActorForwardVector();
 
 	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
 	{
