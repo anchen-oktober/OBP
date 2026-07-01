@@ -297,6 +297,62 @@ void AOBPanicAudioManager::ApplyReliefReactionToEnemies(AActor* PlayerActor)
 	}
 }
 
+int32 AOBPanicAudioManager::GetActiveHeartbeatComponentCount() const
+{
+	return HeartbeatComponent && HeartbeatComponent->IsPlaying() ? 1 : 0;
+}
+
+int32 AOBPanicAudioManager::GetActiveRoarComponentCount() const
+{
+	int32 Count = 0;
+	for (const UAudioComponent* Component : ActiveRoarComponents)
+	{
+		if (Component && Component->IsPlaying())
+		{
+			++Count;
+		}
+	}
+	return Count;
+}
+
+int32 AOBPanicAudioManager::GetActiveFootstepComponentCount() const
+{
+	int32 Count = 0;
+	for (const UAudioComponent* Component : ActiveFootstepComponents)
+	{
+		if (Component && Component->IsPlaying())
+		{
+			++Count;
+		}
+	}
+	return Count;
+}
+
+int32 AOBPanicAudioManager::GetActiveBackgroundMusicComponentCount() const
+{
+	return BackgroundMusicComponent && BackgroundMusicComponent->IsPlaying() ? 1 : 0;
+}
+
+int32 AOBPanicAudioManager::GetActivePanicAudioComponentCount() const
+{
+	int32 Count = GetActiveHeartbeatComponentCount()
+		+ GetActiveRoarComponentCount()
+		+ GetActiveFootstepComponentCount()
+		+ GetActiveBackgroundMusicComponentCount();
+	if (LowDroneComponent && LowDroneComponent->IsPlaying())
+	{
+		++Count;
+	}
+	for (const UAudioComponent* Component : ActiveAmbientComponents)
+	{
+		if (Component && Component->IsPlaying())
+		{
+			++Count;
+		}
+	}
+	return Count;
+}
+
 void AOBPanicAudioManager::StartPanicAudioAfterDelay()
 {
 	if (bPanicAudioActive)
@@ -896,19 +952,11 @@ void AOBPanicAudioManager::PlayAudioBalanceTestStep()
 void AOBPanicAudioManager::PrintAudioDebug(const FString& Message) const
 {
 	UE_LOG(LogOBPanicAudio, Log, TEXT("%s"), *Message);
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, Message);
-	}
 }
 
 void AOBPanicAudioManager::ReportAudioWarning(const FString& Message) const
 {
 	UE_LOG(LogOBPanicAudio, Warning, TEXT("%s"), *Message);
-	if (bEnableAudioDebugLogs && GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Yellow, Message);
-	}
 }
 
 void AOBPanicAudioManager::LogAudioLayerStarted(const TCHAR* LayerName, USoundBase* Sound, float Volume) const

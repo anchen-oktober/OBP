@@ -62,6 +62,11 @@ void AOBWaveManager::StartWaves()
 
 	CurrentWaveNumber = 0;
 	EnemiesRemainingToSpawn = 0;
+	SpawnedThisWave = 0;
+	HeavyEnemiesSpawnedThisWave = 0;
+	TotalEnemiesSpawned = 0;
+	SpawnWarningVFXSpawned = 0;
+	SpawnWarningLightsSpawned = 0;
 	RefreshLivingEnemyCount();
 	CurrentDifficultyMultiplier = 1.0f;
 	PendingEnemySpawnTypes.Reset();
@@ -144,6 +149,8 @@ void AOBWaveManager::BeginNextWave()
 	const FRuntimeWave RuntimeWave = BuildWave(CurrentWaveNumber);
 	RemainingFastEnemies = RuntimeWave.FastCount;
 	RemainingHeavyEnemies = RuntimeWave.HeavyCount;
+	SpawnedThisWave = 0;
+	HeavyEnemiesSpawnedThisWave = 0;
 	PendingEnemySpawnTypes.Reset(RemainingFastEnemies + RemainingHeavyEnemies);
 	for (int32 Index = 0; Index < RemainingHeavyEnemies; ++Index)
 	{
@@ -412,12 +419,24 @@ AOBEnemy* AOBWaveManager::SpawnEnemy(EOBEnemyType Type)
 	Enemy->OnDeathReported.AddUniqueDynamic(this, &AOBWaveManager::HandleEnemyDeathReported);
 	Enemy->OnDestroyed.AddUniqueDynamic(this, &AOBWaveManager::HandleEnemyDestroyed);
 	SpawnedEnemies.Add(TWeakObjectPtr<AOBEnemy>(Enemy));
+	++SpawnedThisWave;
+	++TotalEnemiesSpawned;
+	if (Type == EOBEnemyType::Heavy)
+	{
+		++HeavyEnemiesSpawnedThisWave;
+	}
 	RefreshLivingEnemyCount();
 
 	AOBEnemy* FinishedEnemy = Cast<AOBEnemy>(UGameplayStatics::FinishSpawningActor(Enemy, SpawnTransform));
 	if (!FinishedEnemy)
 	{
 		SpawnedEnemies.Remove(TWeakObjectPtr<AOBEnemy>(Enemy));
+		SpawnedThisWave = FMath::Max(SpawnedThisWave - 1, 0);
+		TotalEnemiesSpawned = FMath::Max(TotalEnemiesSpawned - 1, 0);
+		if (Type == EOBEnemyType::Heavy)
+		{
+			HeavyEnemiesSpawnedThisWave = FMath::Max(HeavyEnemiesSpawnedThisWave - 1, 0);
+		}
 		RefreshLivingEnemyCount();
 		UE_LOG(
 			LogOBWaveManager,
@@ -509,7 +528,10 @@ void AOBWaveManager::RefreshEnemySpawnPoints()
 bool AOBWaveManager::TryChooseSpawnPoint(EOBEnemyType Type, FEnemySpawnCandidate& OutCandidate)
 {
 	OutCandidate = FEnemySpawnCandidate();
-	RefreshEnemySpawnPoints();
+	if (EnemySpawnPoints.Num() == 0)
+	{
+		RefreshEnemySpawnPoints();
+	}
 
 	if (EnemySpawnPoints.Num() == 0)
 	{
@@ -847,6 +869,7 @@ void AOBWaveManager::ShowSpawnWarning(EOBEnemyType Type, const FVector& SpawnLoc
 			this,
 			SpawnWarningEffect,
 			WarningLocation);
+		++SpawnWarningVFXSpawned;
 	}
 
 	if (bUseSpawnWarningLight)
@@ -868,6 +891,7 @@ void AOBWaveManager::ShowSpawnWarning(EOBEnemyType Type, const FVector& SpawnLoc
 				LightComponent->SetCastShadows(false);
 			}
 			WarningLight->SetLifeSpan(SafeWarningDuration);
+			++SpawnWarningLightsSpawned;
 		}
 	}
 }

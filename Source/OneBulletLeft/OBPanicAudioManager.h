@@ -348,6 +348,21 @@ public:
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Panic Audio")
 	bool IsPanicAudioActive() const { return bPanicAudioActive; }
 
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Panic Audio|Debug")
+	int32 GetActiveHeartbeatComponentCount() const;
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Panic Audio|Debug")
+	int32 GetActiveRoarComponentCount() const;
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Panic Audio|Debug")
+	int32 GetActiveFootstepComponentCount() const;
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Panic Audio|Debug")
+	int32 GetActiveBackgroundMusicComponentCount() const;
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Panic Audio|Debug")
+	int32 GetActivePanicAudioComponentCount() const;
+
 protected:
 	static constexpr float PanicStartDelayMin = 0.15f;
 	static constexpr float PanicStartDelayMax = 0.20f;

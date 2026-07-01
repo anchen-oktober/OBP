@@ -204,6 +204,21 @@ public:
 	int32 LivingEnemyCount = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Waves|Runtime")
+	int32 SpawnedThisWave = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Waves|Runtime")
+	int32 HeavyEnemiesSpawnedThisWave = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Waves|Runtime")
+	int32 TotalEnemiesSpawned = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Debug")
+	int32 SpawnWarningVFXSpawned = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Debug")
+	int32 SpawnWarningLightsSpawned = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="OneBulletSettings|Waves|Runtime")
 	float CurrentDifficultyMultiplier = 1.0f;
 
 	UPROPERTY(BlueprintAssignable, Category="OneBulletSettings|Waves|Events")
@@ -256,6 +271,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Waves")
 	float GetIntermissionTimeRemaining() const;
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Debug")
+	int32 GetPendingSpawnCount() const { return PendingEnemySpawnTypes.Num(); }
+
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Debug")
+	int32 GetTrackedEnemyCount() const { return SpawnedEnemies.Num(); }
 
 private:
 	struct FRuntimeWave

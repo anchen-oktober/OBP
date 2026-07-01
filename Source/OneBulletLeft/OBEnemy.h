@@ -451,6 +451,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings")
 	bool IsDead() const { return bDead; }
 
+	UFUNCTION(BlueprintPure, Category="OneBulletSettings|Kick")
+	bool WasKickedRecently(float WindowSeconds = 0.20f) const;
+
 	UFUNCTION(BlueprintPure, Category="OneBulletSettings|AI State")
 	EOBEnemyAIState GetAIState() const { return CurrentAIState; }
 
@@ -489,6 +492,7 @@ protected:
 
 	bool bDead = false;
 	bool bStunned = false;
+	bool bWasKickedRecently = false;
 	bool bDisappearing = false;
 	bool bUsingDirectMovementFallback = false;
 	bool bStoppedForPlayerDeath = false;
@@ -535,6 +539,7 @@ protected:
 	float ActiveKickKnockbackDuration = 0.0f;
 	float ActiveKickKnockbackDistance = 0.0f;
 	float ActiveKickKnockbackPreviousAlpha = 0.0f;
+	float LastKickTime = -1000.0f;
 	float ActiveLocomotionPlayRate = -1.0f;
 	UAnimationAsset* ActiveLocomotionAnimation = nullptr;
 	bool bPlayerWasInLethalTouchRange = false;

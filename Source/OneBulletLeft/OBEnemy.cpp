@@ -282,6 +282,8 @@ void AOBEnemy::ApplyKick(
 		return;
 	}
 
+	bWasKickedRecently = true;
+	LastKickTime = GetWorld() ? GetWorld()->GetTimeSeconds() : LastKickTime;
 	const FVector LaunchDirection = KickDirection.GetSafeNormal2D();
 	OnEnemyKicked(LaunchDirection, EnemyType);
 	const float TypeResistance = EnemyType == EOBEnemyType::Heavy ? 0.72f : 1.0f;
@@ -304,6 +306,16 @@ void AOBEnemy::ApplyKick(
 		FMath::Max(KnockbackDistance, 0.0f) * TypeResistance,
 		FMath::Max(KnockbackDuration, 0.01f),
 		FMath::Max(StunDuration, KnockbackDuration));
+}
+
+bool AOBEnemy::WasKickedRecently(float WindowSeconds) const
+{
+	if (!bWasKickedRecently || !GetWorld())
+	{
+		return false;
+	}
+
+	return GetWorld()->GetTimeSeconds() - LastKickTime <= FMath::Max(WindowSeconds, 0.0f);
 }
 
 void AOBEnemy::ApplyBulletPickupReliefReaction(
@@ -2220,7 +2232,7 @@ void AOBEnemy::ClearPlayerLethalTouchThreat()
 
 void AOBEnemy::TryTouchKill()
 {
-	if (bDead || bSpawnProtected || bBulletPickupReactionPaused || bKickKnockbackActive || !PlayerTarget || PlayerTarget->IsDead())
+	if (bDead || bSpawnProtected || bBulletPickupReactionPaused || bStunned || bKickKnockbackActive || WasKickedRecently(0.20f) || !PlayerTarget || PlayerTarget->IsDead())
 	{
 		ClearPlayerLethalTouchThreat();
 		return;
@@ -2258,6 +2270,13 @@ void AOBEnemy::TryTouchKill()
 	if (!CanDamagePlayerByHeight(PlayerTarget))
 	{
 		ClearPlayerLethalTouchThreat();
+		return;
+	}
+
+	if (PlayerTarget->DidRecentKickProtectFromEnemy(this))
+	{
+		ClearPlayerLethalTouchThreat();
+		UE_LOG(LogOBEnemyAI, Log, TEXT("%s touch kill blocked because player performed a successful emergency kick this frame/recently."), *GetName());
 		return;
 	}
 
