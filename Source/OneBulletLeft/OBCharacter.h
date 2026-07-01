@@ -224,8 +224,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|Feel")
 	TObjectPtr<UParticleSystem> KickImpactVFX;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Audio", meta=(ClampMin="0.0", UIMin="0.0", UIMax="0.06"))
+	float KickHitSoundDelay = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Audio", meta=(ClampMin="0.0", UIMin="0.0", UIMax="0.06"))
+	float KickMissSoundDelay = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|Camera", meta=(ClampMin="0.0", UIMin="0.0", UIMax="0.04"))
+	float KickCameraShakeDelay = 0.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
 	TObjectPtr<UAnimationAsset> KickAnimation;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual")
+	TObjectPtr<UAnimationAsset> KickVisualAnim;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Animation")
 	TObjectPtr<USkeletalMesh> KickLegMesh;
@@ -250,6 +262,15 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual", meta=(ClampMin="0.0", UIMin="0.03", UIMax="0.08"))
 	float KickVisualHideEarlyTime = 0.05f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual", meta=(ClampMin="0.0", UIMin="0.03", UIMax="0.06"))
+	float KickAnimStartOffset = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual", meta=(ClampMin="0.05", UIMin="1.25", UIMax="1.5"))
+	float KickAnimPlayRate = 1.35f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Kick|First Person Visual|Debug")
+	bool bForceShowPlayerLeg = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="OneBulletSettings|Kick|PlayerLeg")
 	bool bUseFullBodyMeshAsKickSource = true;
@@ -606,7 +627,10 @@ protected:
 	void PlayWeaponShootAnimation();
 	bool ApplyKickLegOnlyMask();
 	void ResetKickBoneMask();
+	void ResetKickBoneVisibility();
 	void ShowKickVisualDebugMessage(const FString& Message) const;
+	void ForceShowPlayerLegForDebug();
+	void LogPlayerLegRenderState(const TCHAR* Context) const;
 	bool PlayKickLegAnimation();
 	void FinishKickLegAnimation();
 	FVector GetBulletVisualStartLocation(const FVector& TraceStart) const;
